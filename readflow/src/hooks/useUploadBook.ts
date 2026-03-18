@@ -28,7 +28,18 @@ export function useUploadBook() {
           if (xhr.status >= 200 && xhr.status < 300) {
             resolve(JSON.parse(xhr.responseText));
           } else {
-            reject(new Error(xhr.responseText || "Upload failed"));
+            try {
+              const body = JSON.parse(xhr.responseText);
+              reject(new Error(body.error || "Upload failed"));
+            } catch {
+              reject(
+                new Error(
+                  xhr.status === 413
+                    ? "File is too large. Please try a smaller file."
+                    : `Upload failed (${xhr.status})`
+                )
+              );
+            }
           }
         });
 
