@@ -145,7 +145,7 @@ export default function UploadModal({ open, onClose }: UploadModalProps) {
 
         <style jsx>{`
           .drop-zone {
-            border: 2px dashed var(--border-default);
+            border: 1.5px dashed var(--border-default);
             border-radius: 12px;
             padding: 40px 20px;
             display: flex;
@@ -153,12 +153,12 @@ export default function UploadModal({ open, onClose }: UploadModalProps) {
             align-items: center;
             gap: 8px;
             cursor: pointer;
-            transition: all 150ms ease;
+            transition: border-color 150ms ease, background 150ms ease;
           }
           .drop-zone:hover,
           .drop-active {
             border-color: var(--accent);
-            background: var(--bg-accent-subtle);
+            background: var(--accent-subtle);
           }
           .drop-text {
             font-size: 14px;

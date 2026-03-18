@@ -26,6 +26,7 @@
   --accent-hover: #9A3412;
   --accent-subtle: #FFF7ED;
   --accent-text: #7C2D12;
+  --bg-accent-subtle: #FFF7ED;
 
   /* ── Semantic ── */
   --success: #15803D;
@@ -58,6 +59,7 @@
   --accent-hover: #EA580C;
   --accent-subtle: #431407;
   --accent-text: #FED7AA;
+  --bg-accent-subtle: #431407;
 }
 
 /* ═══════════════════════════════════════════

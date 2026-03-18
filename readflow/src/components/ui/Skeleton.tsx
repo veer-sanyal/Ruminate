@@ -20,8 +20,8 @@ export default function Skeleton({
           animation: shimmer 1.5s ease-in-out infinite;
         }
         @keyframes shimmer {
-          0%, 100% { opacity: 0.5; }
-          50% { opacity: 1; }
+          0%, 100% { opacity: 0.4; }
+          50% { opacity: 0.8; }
         }
       `}</style>
     </>
@@ -31,10 +31,29 @@ export default function Skeleton({
 /** Pre-built skeleton for a book card in the library grid */
 export function BookCardSkeleton() {
   return (
-    <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-      <Skeleton height="200px" borderRadius="8px" />
-      <Skeleton width="70%" height="14px" />
-      <Skeleton width="40%" height="12px" />
-    </div>
+    <>
+      <div className="book-skeleton">
+        <Skeleton height="100%" borderRadius="4px" />
+        <div className="book-skeleton-text">
+          <Skeleton width="80%" height="13px" borderRadius="3px" />
+          <Skeleton width="50%" height="11px" borderRadius="3px" />
+        </div>
+      </div>
+      <style jsx>{`
+        .book-skeleton {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .book-skeleton > :first-child {
+          aspect-ratio: 2 / 3;
+        }
+        .book-skeleton-text {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+      `}</style>
+    </>
   );
 }

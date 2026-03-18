@@ -19,7 +19,8 @@ export default function Sidebar() {
       {/* Desktop sidebar */}
       <aside className="sidebar">
         <div className="sidebar-logo">
-          <h2>ReadFlow</h2>
+          <span className="logo-mark">R</span>
+          <span className="logo-text">ReadFlow</span>
         </div>
         <nav className="sidebar-nav">
           {navItems.map((item) => {
@@ -45,31 +46,48 @@ export default function Sidebar() {
           top: 0;
           bottom: 0;
           width: 240px;
-          background: var(--bg-secondary);
+          background: var(--bg-primary);
           border-right: 1px solid var(--border-default);
           display: flex;
           flex-direction: column;
           z-index: 40;
-          transition: width 200ms ease;
         }
 
         .sidebar-logo {
           padding: 24px 20px;
-          border-bottom: 1px solid var(--border-subtle);
+          display: flex;
+          align-items: center;
+          gap: 10px;
         }
 
-        .sidebar-logo h2 {
+        .logo-mark {
           font-family: var(--font-display);
-          font-size: 24px;
-          font-weight: 600;
+          font-size: 22px;
+          font-weight: 400;
+          color: var(--accent);
+          width: 32px;
+          height: 32px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: 1.5px solid var(--accent);
+          border-radius: 6px;
+          letter-spacing: -0.02em;
+        }
+
+        .logo-text {
+          font-family: var(--font-display);
+          font-size: 20px;
+          font-weight: 400;
           color: var(--text-primary);
+          letter-spacing: -0.01em;
         }
 
         .sidebar-nav {
-          padding: 12px 8px;
+          padding: 8px 12px;
           display: flex;
           flex-direction: column;
-          gap: 4px;
+          gap: 2px;
         }
 
         .sidebar-nav-item {
@@ -83,19 +101,17 @@ export default function Sidebar() {
           font-size: 14px;
           font-weight: 500;
           text-decoration: none;
-          transition: all 150ms ease;
-          position: relative;
+          transition: color 150ms ease, background 150ms ease;
         }
 
         .sidebar-nav-item:hover {
-          background: var(--bg-tertiary);
           color: var(--text-primary);
+          background: var(--bg-secondary);
         }
 
         .sidebar-nav-item.active {
-          background: var(--accent-subtle);
           color: var(--accent-text);
-          border-left: 2px solid var(--accent);
+          background: var(--accent-subtle);
         }
 
         .sidebar-nav-label {
@@ -108,13 +124,15 @@ export default function Sidebar() {
           .sidebar {
             width: 64px;
           }
-          .sidebar-logo h2 {
+          .logo-text {
             display: none;
           }
           .sidebar-logo {
-            padding: 24px 16px;
-            display: flex;
+            padding: 24px 0;
             justify-content: center;
+          }
+          .sidebar-nav {
+            padding: 8px;
           }
           .sidebar-nav-label {
             display: none;
