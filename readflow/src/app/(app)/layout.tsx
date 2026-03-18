@@ -21,7 +21,7 @@ export default function AppLayout({
           margin-left: 240px;
           min-height: 100vh;
           padding: 32px 24px;
-          max-width: calc(960px + 48px);
+          max-width: 100%;
         }
 
         /* Tablet: smaller sidebar */
