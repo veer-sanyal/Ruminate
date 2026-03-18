@@ -1,0 +1,180 @@
+@import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Literata:ital,opsz,wght@0,7..72,200..900;1,7..72,200..900&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+/* ═══════════════════════════════════════════
+   ReadFlow Design System — CSS Custom Properties
+   ═══════════════════════════════════════════ */
+
+:root {
+  /* ── Backgrounds ── */
+  --bg-primary: #FAFAF9;
+  --bg-secondary: #F5F5F4;
+  --bg-tertiary: #E7E5E4;
+  --bg-reader: #FAF8F5;
+
+  /* ── Text ── */
+  --text-primary: #1C1917;
+  --text-secondary: #78716C;
+  --text-tertiary: #A8A29E;
+
+  /* ── Borders ── */
+  --border-default: #E7E5E4;
+  --border-subtle: #F5F5F4;
+
+  /* ── Accent (burnt sienna) ── */
+  --accent: #C2410C;
+  --accent-hover: #9A3412;
+  --accent-subtle: #FFF7ED;
+  --accent-text: #7C2D12;
+
+  /* ── Semantic ── */
+  --success: #15803D;
+  --warning: #B45309;
+  --error: #DC2626;
+  --info: #1D4ED8;
+
+  /* ── Fonts ── */
+  --font-display: "Instrument Serif", Georgia, serif;
+  --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-reader: "Literata", Georgia, serif;
+  --font-mono: "JetBrains Mono", Menlo, monospace;
+}
+
+/* ── Dark Mode ── */
+.dark {
+  --bg-primary: #1C1917;
+  --bg-secondary: #292524;
+  --bg-tertiary: #44403C;
+  --bg-reader: #1A1814;
+
+  --text-primary: #FAFAF9;
+  --text-secondary: #A8A29E;
+  --text-tertiary: #78716C;
+
+  --border-default: #44403C;
+  --border-subtle: #292524;
+
+  --accent: #C2410C;
+  --accent-hover: #EA580C;
+  --accent-subtle: #431407;
+  --accent-text: #FED7AA;
+}
+
+/* ═══════════════════════════════════════════
+   Base Styles
+   ═══════════════════════════════════════════ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+/* ── Typography Utils ── */
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+h1 { font-size: 32px; line-height: 1.2; }
+h2 { font-size: 24px; line-height: 1.3; }
+h3 { font-size: 20px; line-height: 1.5; font-weight: 500; }
+h4 { font-size: 18px; line-height: 1.5; font-weight: 500; }
+
+/* Tabular numbers for UI metrics */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Focus Ring ── */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── Scrollbar (subtle) ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+
+/* ── Selection ── */
+::selection {
+  background: var(--accent-subtle);
+  color: var(--accent-text);
+}
+
+/* ── Links ── */
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ── Button Reset ── */
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+/* ── Input zoom prevention on iOS ── */
+input, textarea, select {
+  font-size: 16px;
+}
+
+/* ═══════════════════════════════════════════
+   Reduced Motion
+   ═══════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ═══════════════════════════════════════════
+   Tailwind Theme Inline (v4)
+   ═══════════════════════════════════════════ */
+
+@theme inline {
+  --color-background: var(--bg-primary);
+  --color-foreground: var(--text-primary);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+}
