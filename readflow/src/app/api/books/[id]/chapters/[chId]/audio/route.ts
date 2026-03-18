@@ -1,9 +1,15 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import OpenAI from "openai";
+import { ai, MODEL_TTS } from "@/lib/gemini";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Map our voice names to Gemini prebuilt voices
+const VOICE_MAP: Record<string, string> = {
+  alloy: "Kore",
+  echo: "Puck",
+  nova: "Aoede",
+  shimmer: "Leda",
+};
 
 export async function POST(
   request: Request,
@@ -61,24 +67,43 @@ export async function POST(
       .eq("id", user.id)
       .single();
 
-    const voice = (profile?.preferred_voice ?? "alloy") as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer";
+    const userVoice = profile?.preferred_voice ?? "alloy";
+    const geminiVoice = VOICE_MAP[userVoice] ?? "Kore";
 
-    // Generate TTS audio with timestamps
-    const response = await openai.audio.speech.create({
-      model: "tts-1",
-      voice,
-      input: chapter.raw_text.substring(0, 4096), // TTS has input limits
-      response_format: "mp3",
+    // Generate TTS audio via Gemini
+    const response = await ai.models.generateContent({
+      model: MODEL_TTS,
+      contents: chapter.raw_text.substring(0, 5000),
+      config: {
+        responseModalities: ["AUDIO"],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: {
+              voiceName: geminiVoice,
+            },
+          },
+        },
+      },
     });
 
-    const audioBuffer = Buffer.from(await response.arrayBuffer());
-    const audioPath = `${user.id}/${id}/${chId}.mp3`;
+    // Extract audio data from response
+    const audioData =
+      response.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+
+    if (!audioData?.data) {
+      throw new Error("No audio data in Gemini response");
+    }
+
+    const audioBuffer = Buffer.from(audioData.data, "base64");
+    const mimeType = audioData.mimeType ?? "audio/mp3";
+    const ext = mimeType.includes("wav") ? "wav" : "mp3";
+    const audioPath = `${user.id}/${id}/${chId}.${ext}`;
 
     // Upload audio to storage
     const { error: storageError } = await adminSupabase.storage
       .from("audio-cache")
       .upload(audioPath, audioBuffer, {
-        contentType: "audio/mpeg",
+        contentType: mimeType,
         upsert: true,
       });
 
