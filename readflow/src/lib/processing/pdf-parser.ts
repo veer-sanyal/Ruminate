@@ -10,9 +10,12 @@ export async function parsePdf(
   try {
     const { extractText, getMeta } = await import("unpdf");
 
-    const { text: fullText, totalPages } = await extractText(
+    const { text: rawText, totalPages } = await extractText(
       new Uint8Array(fileBuffer)
     );
+
+    // unpdf returns text as string or string[] depending on version
+    const fullText = Array.isArray(rawText) ? rawText.join("\n\n") : rawText;
 
     if (!fullText || fullText.trim().length === 0) {
       throw new Error("No text could be extracted from the PDF");
