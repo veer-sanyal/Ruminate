@@ -173,7 +173,7 @@ function findSectionsWithTocSkip(
   const pass1 = findSectionPositionsFuzzy(fullText, sectionTitles, 0);
 
   // Detect TOC cluster: all matches bunched in first portion, bulk of text after
-  if (pass1.length >= 3) {
+  if (pass1.length >= 2) {
     const lastMatchEnd = pass1[pass1.length - 1]!.startIdx;
     const textAfterLastMatch = fullText.length - lastMatchEnd;
     if (textAfterLastMatch > fullText.length * 0.5) {
@@ -224,52 +224,37 @@ function findSectionPositionsFuzzy(
  */
 function fuzzyFindTitle(fullText: string, title: string, searchFrom: number): number {
   const searchSlice = fullText.substring(searchFrom);
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
 
   // Strategy 1: Full title, flexible whitespace
-  const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-  const fullMatch = searchSlice.match(new RegExp(escaped, "i"));
+  const fullMatch = searchSlice.match(new RegExp(esc(title), "i"));
   if (fullMatch?.index !== undefined) {
     return searchFrom + fullMatch.index;
   }
 
-  // Strategy 2: Split on ":" or "—" or "-" and try prefix and suffix separately
+  // Strategy 2: Strip leading number prefix ("1. Title" → "Title", "1: Title" → "Title")
+  const numberPrefixMatch = title.match(/^\d+[\.\:\)\s]+\s*/);
+  const titleWithoutNumber = numberPrefixMatch
+    ? title.substring(numberPrefixMatch[0].length).trim()
+    : null;
+
+  if (titleWithoutNumber && titleWithoutNumber.length > 5) {
+    const numlessMatch = searchSlice.match(new RegExp(esc(titleWithoutNumber), "i"));
+    if (numlessMatch?.index !== undefined) {
+      return searchFrom + numlessMatch.index;
+    }
+  }
+
+  // Strategy 3: Split on separators (":" "—" "-") and try suffix (the unique part)
   const separators = [":", "—", " - "];
   for (const sep of separators) {
     const sepIdx = title.indexOf(sep);
-    if (sepIdx > 0) {
-      const prefix = title.substring(0, sepIdx).trim();
-      const suffix = title.substring(sepIdx + sep.length).trim();
-
-      // Try suffix first (more unique, e.g., "The Warm Social World Awaits")
-      if (suffix.length > 5) {
-        const escapedSuffix = suffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-        const suffixMatch = searchSlice.match(new RegExp(escapedSuffix, "i"));
-        if (suffixMatch?.index !== undefined) {
-          // Walk back to find if prefix is nearby (within 50 chars before)
-          const matchPos = searchFrom + suffixMatch.index;
-          const lookback = fullText.substring(Math.max(searchFrom, matchPos - 50), matchPos);
-          const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-          const prefixInLookback = lookback.match(new RegExp(escapedPrefix, "i"));
-          if (prefixInLookback?.index !== undefined) {
-            return Math.max(searchFrom, matchPos - 50) + prefixInLookback.index;
-          }
-          // Even without prefix nearby, the suffix match is decent
-          return matchPos;
-        }
-      }
-
-      // Try just the prefix (e.g., "Chapter 1")
-      if (prefix.length > 3) {
-        const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-        // Require it to be on its own line or followed by a separator/newline
-        const prefixLineRegex = new RegExp(`(?:^|\\n)\\s*${escapedPrefix}\\s*(?:[:\\-—\\n])`, "im");
-        const prefixMatch = searchSlice.match(prefixLineRegex);
-        if (prefixMatch?.index !== undefined) {
-          // Adjust to skip the leading newline
-          const raw = prefixMatch[0];
-          const offset = raw.startsWith("\n") ? 1 : 0;
-          return searchFrom + prefixMatch.index + offset;
-        }
+    if (sepIdx <= 0) continue;
+    const suffix = title.substring(sepIdx + sep.length).trim();
+    if (suffix.length > 5) {
+      const suffixMatch = searchSlice.match(new RegExp(esc(suffix), "i"));
+      if (suffixMatch?.index !== undefined) {
+        return searchFrom + suffixMatch.index;
       }
     }
   }
@@ -278,67 +263,97 @@ function fuzzyFindTitle(fullText: string, title: string, searchFrom: number): nu
 }
 
 /**
- * Fallback: find chapters by detecting "Chapter N" patterns directly in the text.
- * Used when title matching fails because LLM titles don't match body headings.
+ * Fallback: find chapters by detecting heading patterns directly in the text.
+ * Looks for "Chapter N", standalone numbers, and named sections.
  */
 function findChaptersByPattern(
   fullText: string,
   llmTitles: string[]
 ): { title: string; startIdx: number }[] {
-  // Detect if chapters follow a "Chapter N" pattern
-  const chapterPattern = /\n\s*(chapter\s+(\d+|[a-z]+)(?:\s*[:\-—]\s*[^\n]*)?)\s*\n/gi;
   const results: { title: string; startIdx: number }[] = [];
   let match: RegExpExecArray | null;
 
-  // Also look for named sections (intro, conclusion, etc.)
-  const namedSectionPattern = /\n\s*((?:introduction|preface|foreword|prologue|epilogue|conclusion|afterword|acknowledgments?|about the author|appendix)(?:\s*[:\-—]\s*[^\n]*)?)\s*\n/gi;
-
-  // Find chapter-numbered matches
+  // Pattern 1: "Chapter N" (with optional subtitle)
+  const chapterPattern = /\n\s*(chapter\s+(\d+|[a-z]+)(?:\s*[:\-—]\s*[^\n]*)?)\s*\n/gi;
   while ((match = chapterPattern.exec(fullText)) !== null) {
-    const title = match[1]!.trim();
-    const startIdx = match.index + 1; // skip leading newline
-    results.push({ title, startIdx });
+    results.push({ title: match[1]!.trim(), startIdx: match.index + 1 });
   }
 
-  // Find named section matches
+  // Pattern 2: Standalone number on its own line (common in PDF extraction for chapter numbers)
+  // Match a line that's just a number, possibly followed by a title on the next line
+  const standaloneNumPattern = /\n\s*(\d{1,2})\s*\n\s*([^\n]{5,80})\s*\n/g;
+  while ((match = standaloneNumPattern.exec(fullText)) !== null) {
+    const num = match[1]!;
+    const titleAfter = match[2]!.trim();
+    // Skip if this looks like a page number (preceded by lots of text on same logical page)
+    // or if number is > 30 (unlikely chapter count)
+    if (parseInt(num) > 30) continue;
+    if (!results.some(r => Math.abs(r.startIdx - match!.index) < 100)) {
+      results.push({ title: `${num}. ${titleAfter}`, startIdx: match.index + 1 });
+    }
+  }
+
+  // Pattern 3: Named sections (intro, conclusion, etc.)
+  const namedSectionPattern = /\n\s*((?:introduction|preface|foreword|prologue|epilogue|conclusion|afterword|acknowledgments?|about the author|appendix)(?:\s*[:\-—]\s*[^\n]*)?)\s*\n/gi;
   while ((match = namedSectionPattern.exec(fullText)) !== null) {
-    const title = match[1]!.trim();
     const startIdx = match.index + 1;
-    // Only add if not overlapping with an existing chapter match
     if (!results.some(r => Math.abs(r.startIdx - startIdx) < 100)) {
-      results.push({ title, startIdx });
+      results.push({ title: match[1]!.trim(), startIdx });
     }
   }
 
   // Sort by position
   results.sort((a, b) => a.startIdx - b.startIdx);
 
-  // Skip TOC cluster: if early matches are bunched together
-  if (results.length >= 3) {
-    const lastIdx = results[results.length - 1]!.startIdx;
-    const firstBunchEnd = results[Math.min(results.length - 1, Math.floor(results.length / 2))]!.startIdx;
-    // If first half of matches are in the first 15% of text, they're TOC entries
-    if (firstBunchEnd < fullText.length * 0.15 && lastIdx > fullText.length * 0.3) {
-      // Keep only matches after the 15% mark
-      const cutoff = fullText.length * 0.15;
-      const filtered = results.filter(r => r.startIdx > cutoff);
-      if (filtered.length >= 2) {
-        return filtered;
+  // Skip TOC cluster: find where body content starts by looking for a gap
+  // In a TOC, entries are close together; in the body, chapters are far apart
+  if (results.length >= 4) {
+    // Find the largest gap between consecutive matches
+    let maxGap = 0;
+    let gapIdx = 0;
+    for (let i = 1; i < results.length; i++) {
+      const gap = results[i]!.startIdx - results[i - 1]!.startIdx;
+      if (gap > maxGap) {
+        maxGap = gap;
+        gapIdx = i;
+      }
+    }
+    // If the largest gap is significantly bigger than the average gap before it,
+    // everything before the gap is likely the TOC
+    if (gapIdx > 0) {
+      const avgGapBefore = results[gapIdx - 1]!.startIdx / gapIdx;
+      if (maxGap > avgGapBefore * 5 && gapIdx < results.length - 1) {
+        console.log("[Chapter Detection] Pattern: skipping TOC entries before gap at index", gapIdx);
+        results.splice(0, gapIdx);
       }
     }
   }
 
-  // Cross-reference with LLM titles to use better names
-  if (results.length > 0 && llmTitles.length > 0) {
-    for (const result of results) {
-      // Find best matching LLM title
-      const lowerResult = result.title.toLowerCase();
-      for (const llmTitle of llmTitles) {
-        const lowerLlm = llmTitle.toLowerCase();
-        // Check if they share a chapter number or key words
-        const chapterNum = lowerResult.match(/chapter\s+(\d+)/)?.[1];
-        if (chapterNum && lowerLlm.includes(`chapter ${chapterNum}`)) {
-          result.title = llmTitle; // Use the cleaner LLM title
+  // Cross-reference with LLM titles to use cleaner names
+  for (const result of results) {
+    const lowerResult = result.title.toLowerCase();
+    for (const llmTitle of llmTitles) {
+      const lowerLlm = llmTitle.toLowerCase();
+      // Match by shared number or significant text overlap
+      const numMatch = lowerResult.match(/^(\d+)/);
+      const llmNumMatch = lowerLlm.match(/^(\d+)/);
+      if (numMatch && llmNumMatch && numMatch[1] === llmNumMatch[1]) {
+        result.title = llmTitle;
+        break;
+      }
+      // Match by chapter number
+      const chapterNum = lowerResult.match(/chapter\s+(\d+)/)?.[1];
+      if (chapterNum && lowerLlm.includes(`chapter ${chapterNum}`)) {
+        result.title = llmTitle;
+        break;
+      }
+      // Match by title text overlap (at least 80% of words match)
+      const resultWords = lowerResult.replace(/^\d+[\.\:\)]\s*/, "").split(/\s+/);
+      const llmWords = lowerLlm.replace(/^\d+[\.\:\)]\s*/, "").split(/\s+/);
+      if (resultWords.length >= 3) {
+        const overlap = resultWords.filter(w => llmWords.includes(w)).length;
+        if (overlap >= resultWords.length * 0.8) {
+          result.title = llmTitle;
           break;
         }
       }
