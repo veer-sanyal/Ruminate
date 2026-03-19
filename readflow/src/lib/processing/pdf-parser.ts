@@ -8,9 +8,13 @@ export async function parsePdf(
   fileBuffer: ArrayBuffer
 ): Promise<ExtractionResult> {
   try {
-    const pdfjsLib = await import("pdfjs-dist");
+    // Use legacy build for Node.js serverless compatibility
+    const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
 
-    const pdf = await pdfjsLib.getDocument({ data: fileBuffer }).promise;
+    const pdf = await pdfjsLib.getDocument({
+      data: fileBuffer,
+      useSystemFonts: true,
+    }).promise;
     const numPages = pdf.numPages;
 
     const allText: string[] = [];

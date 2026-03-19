@@ -88,15 +88,24 @@ export async function POST(request: Request) {
       );
     }
 
-    // Trigger processing pipeline (fire and forget)
+    // Trigger processing pipeline
     const origin = new URL(request.url).origin;
-    fetch(`${origin}/api/internal/process-book`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ book_id: bookId }),
-    }).catch(() => {
-      // Processing will be retried on next poll
-    });
+    try {
+      const processRes = await fetch(`${origin}/api/internal/process-book`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ book_id: bookId }),
+      });
+      if (!processRes.ok) {
+        console.error(
+          "Process-book failed:",
+          processRes.status,
+          await processRes.text()
+        );
+      }
+    } catch (processErr) {
+      console.error("Process-book fetch error:", processErr);
+    }
 
     return NextResponse.json({ book_id: bookId });
   } catch (err) {
