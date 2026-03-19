@@ -2,93 +2,40 @@ import type { ExtractionResult, ExtractedChapter } from "./extract";
 
 /**
  * Parse PDF file from a buffer.
- * Uses pdf.js for text extraction with heading detection.
+ * Uses pdf-parse for Node.js-compatible text extraction.
  */
 export async function parsePdf(
   fileBuffer: ArrayBuffer
 ): Promise<ExtractionResult> {
   try {
-    // Use legacy build for Node.js serverless compatibility
-    const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const pdfParse = (await import("pdf-parse")).default;
+    const buffer = Buffer.from(fileBuffer);
+    const data = await pdfParse(buffer);
 
-    const pdf = await pdfjsLib.getDocument({
-      data: fileBuffer,
-      useSystemFonts: true,
-    }).promise;
-    const numPages = pdf.numPages;
+    const fullText = data.text;
 
-    const allText: string[] = [];
-    const headingPositions: { page: number; text: string; fontSize: number }[] = [];
-
-    for (let i = 1; i <= numPages; i++) {
-      const page = await pdf.getPage(i);
-      const content = await page.getTextContent();
-
-      let pageText = "";
-      let maxFontSize = 0;
-
-      for (const item of content.items) {
-        if ("str" in item) {
-          const fontSize = "transform" in item ? Math.abs(item.transform[0]) : 12;
-          pageText += item.str + " ";
-
-          // Detect potential headings (larger font size)
-          if (fontSize > 14 && item.str.trim().length > 0 && item.str.trim().length < 100) {
-            headingPositions.push({
-              page: i,
-              text: item.str.trim(),
-              fontSize,
-            });
-          }
-
-          if (fontSize > maxFontSize) maxFontSize = fontSize;
-        }
-      }
-
-      allText.push(pageText.trim());
+    if (!fullText || fullText.trim().length === 0) {
+      throw new Error("No text could be extracted from the PDF");
     }
 
-    // Build chapters from heading positions
-    const fullText = allText.join("\n\n");
     const chapters: ExtractedChapter[] = [];
 
-    if (headingPositions.length > 1) {
-      // Use detected headings to split into chapters
-      const avgFontSize =
-        headingPositions.reduce((s, h) => s + h.fontSize, 0) /
-        headingPositions.length;
-      const chapterHeadings = headingPositions.filter(
-        (h) => h.fontSize >= avgFontSize * 0.9
-      );
+    // Try to detect chapter boundaries using common patterns
+    const chapterPattern =
+      /^(chapter\s+\d+|part\s+\d+|section\s+\d+|\d+\.\s+\w+)/gim;
+    const matches = [...fullText.matchAll(chapterPattern)];
 
-      for (let i = 0; i < chapterHeadings.length; i++) {
-        const heading = chapterHeadings[i]!;
-        const nextHeading = chapterHeadings[i + 1];
+    if (matches.length > 1) {
+      for (let i = 0; i < matches.length; i++) {
+        const match = matches[i]!;
+        const nextMatch = matches[i + 1];
+        const startIdx = match.index!;
+        const endIdx = nextMatch ? nextMatch.index! : fullText.length;
+        const chapterText = fullText.substring(startIdx, endIdx).trim();
 
-        const startIdx = fullText.indexOf(heading.text);
-        const endIdx = nextHeading
-          ? fullText.indexOf(nextHeading.text)
-          : fullText.length;
-
-        if (startIdx !== -1) {
-          const chapterText = fullText.substring(startIdx, endIdx).trim();
+        if (chapterText.length > 50) {
           chapters.push({
-            title: heading.text,
-            text: chapterText,
-            sortOrder: i,
-          });
-        }
-      }
-    }
-
-    // Fallback: if no chapters detected, split by page groups
-    if (chapters.length === 0) {
-      const pagesPerChapter = Math.max(1, Math.ceil(numPages / 10));
-      for (let i = 0; i < allText.length; i += pagesPerChapter) {
-        const chapterText = allText.slice(i, i + pagesPerChapter).join("\n\n");
-        if (chapterText.trim()) {
-          chapters.push({
-            title: `Section ${Math.floor(i / pagesPerChapter) + 1}`,
+            title: match[0].trim(),
             text: chapterText,
             sortOrder: chapters.length,
           });
@@ -96,9 +43,47 @@ export async function parsePdf(
       }
     }
 
-    return { chapters, metadata: {} };
+    // Fallback: split into sections by page breaks or large gaps
+    if (chapters.length === 0) {
+      const pages = fullText.split(/\f/); // form feed = page break
+      if (pages.length > 1) {
+        const pagesPerChapter = Math.max(1, Math.ceil(pages.length / 10));
+        for (let i = 0; i < pages.length; i += pagesPerChapter) {
+          const chapterText = pages
+            .slice(i, i + pagesPerChapter)
+            .join("\n\n")
+            .trim();
+          if (chapterText.length > 0) {
+            chapters.push({
+              title: `Section ${Math.floor(i / pagesPerChapter) + 1}`,
+              text: chapterText,
+              sortOrder: chapters.length,
+            });
+          }
+        }
+      }
+    }
+
+    // Final fallback: single chapter with all text
+    if (chapters.length === 0) {
+      chapters.push({
+        title: "Full Text",
+        text: fullText.trim(),
+        sortOrder: 0,
+      });
+    }
+
+    return {
+      chapters,
+      metadata: {
+        title: data.info?.Title || undefined,
+        author: data.info?.Author || undefined,
+      },
+    };
   } catch (error) {
     console.error("PDF parsing error:", error);
-    throw new Error("Failed to parse PDF file");
+    throw new Error(
+      `Failed to parse PDF file: ${error instanceof Error ? error.message : "unknown error"}`
+    );
   }
 }
