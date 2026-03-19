@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { ai, MODEL_TTS, MODEL_LIVE_TTS } from "@/lib/gemini";
-import { Modality } from "@google/genai";
+import { ai, MODEL_TTS } from "@/lib/gemini";
 
 // Map our voice names to Gemini prebuilt voices
 const VOICE_MAP: Record<string, string> = {
@@ -75,13 +74,7 @@ export async function POST(
     const fullText = chapter.raw_text;
     console.log(`[TTS] Generating audio for chapter ${chId}, full text length: ${fullText.length}`);
 
-    let audioBuffer: Buffer;
-    try {
-      audioBuffer = await generateAudioViaLiveApi(fullText, geminiVoice);
-    } catch (liveError) {
-      console.warn("[TTS] Live API failed, falling back to batch chunking:", liveError);
-      audioBuffer = await generateAudioViaBatchChunking(fullText, geminiVoice);
-    }
+    const audioBuffer = await generateAudioViaBatchChunking(fullText, geminiVoice);
 
     const uploadMimeType = "audio/wav";
 
@@ -194,97 +187,7 @@ function splitTextIntoChunks(text: string, maxChars = 4000): string[] {
 }
 
 /**
- * Generate audio via Gemini Live API (streaming).
- * Sends text in chunks via a live session, collects PCM, wraps in WAV.
- */
-async function generateAudioViaLiveApi(text: string, voiceName: string): Promise<Buffer> {
-  const chunks = splitTextIntoChunks(text, 4000);
-  console.log(`[TTS Live] ${chunks.length} chunks, voice: ${voiceName}`);
-
-  const pcmBuffers: Buffer[] = [];
-  let sampleRate = 24000;
-  let done = false;
-  let resolveCompletion: (() => void) | null = null;
-  let rejectCompletion: ((err: Error) => void) | null = null;
-
-  const session = await ai.live.connect({
-    model: MODEL_LIVE_TTS,
-    config: {
-      responseModalities: [Modality.AUDIO],
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: {
-            voiceName,
-          },
-        },
-      },
-    },
-    callbacks: {
-      onmessage: (message) => {
-        const serverContent = message.serverContent;
-        if (serverContent?.modelTurn?.parts) {
-          for (const part of serverContent.modelTurn.parts) {
-            if (part.inlineData?.data) {
-              pcmBuffers.push(Buffer.from(part.inlineData.data, "base64"));
-              const mime = part.inlineData.mimeType ?? "";
-              const rateMatch = mime.match(/rate=(\d+)/);
-              if (rateMatch?.[1]) {
-                sampleRate = parseInt(rateMatch[1]);
-              }
-            }
-          }
-        }
-        if (serverContent?.turnComplete) {
-          done = true;
-          resolveCompletion?.();
-        }
-      },
-      onerror: (error) => {
-        console.error("[TTS Live] Stream error:", error);
-        rejectCompletion?.(new Error("Live TTS stream error"));
-      },
-    },
-  });
-
-  try {
-    for (let i = 0; i < chunks.length; i++) {
-      const isLast = i === chunks.length - 1;
-      console.log(`[TTS Live] Sending chunk ${i + 1}/${chunks.length} (${chunks[i]!.length} chars)`);
-
-      session.sendClientContent({
-        turns: [
-          {
-            role: "user",
-            parts: [{ text: chunks[i]! }],
-          },
-        ],
-        turnComplete: isLast,
-      });
-    }
-
-    // Wait for turnComplete from the server
-    if (!done) {
-      await new Promise<void>((resolve, reject) => {
-        resolveCompletion = resolve;
-        rejectCompletion = reject;
-        setTimeout(() => reject(new Error("Live TTS session timed out after 120s")), 120_000);
-      });
-    }
-  } finally {
-    session.close();
-  }
-
-  if (pcmBuffers.length === 0) {
-    throw new Error("No audio data received from Live API");
-  }
-
-  const combinedPcm = Buffer.concat(pcmBuffers);
-  console.log(`[TTS Live] Total PCM: ${combinedPcm.length} bytes, rate: ${sampleRate}`);
-  return Buffer.from(wrapPcmInWav(combinedPcm, sampleRate));
-}
-
-/**
- * Fallback: generate audio via batch API with chunking.
+ * Generate audio via batch API with chunking.
  * Calls generateContent for each chunk and concatenates PCM.
  */
 async function generateAudioViaBatchChunking(text: string, voiceName: string): Promise<Buffer> {

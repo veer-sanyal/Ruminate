@@ -16,6 +16,3 @@ export const MODEL_FLASH = "gemini-3-flash-preview";
 
 /** Model for text-to-speech (batch) */
 export const MODEL_TTS = "gemini-2.5-flash-preview-tts";
-
-/** Model for text-to-speech via Live API (streaming, handles long text) */
-export const MODEL_LIVE_TTS = "gemini-2.5-flash-preview-tts";

@@ -168,6 +168,12 @@ input, textarea, select {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+
+  /* Loading spinners are functional UI — exempt from reduced-motion */
+  .spinner {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
+  }
 }
 
 /* ═══════════════════════════════════════════
