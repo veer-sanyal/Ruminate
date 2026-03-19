@@ -56,12 +56,12 @@ async function detectChaptersWithLlm(
 ): Promise<ExtractedChapter[]> {
   // Send first portion of text to LLM for structure detection
   // We send enough to capture the table of contents or early chapter patterns
-  const sampleText = fullText.substring(0, 15000);
+  const sampleText = fullText.substring(0, 20000);
 
   try {
     const response = await ai.models.generateContent({
       model: MODEL_FLASH,
-      contents: `You are analyzing the extracted text of a book/document to identify its structure. Below is the beginning of the text (first ~15000 characters). Identify all chapter/section boundaries.
+      contents: `You are analyzing the extracted text of a book/document to identify its structure. Below is the beginning of the text (first ~20000 characters). Identify all chapter/section boundaries.
 
 Look for ANY structural divisions including but not limited to:
 - Chapters (Chapter 1, Chapter One, I, II, etc.)
@@ -70,7 +70,9 @@ Look for ANY structural divisions including but not limited to:
 - Numbered sections without "Chapter" prefix
 - Any other clear structural breaks
 
-Return a JSON array of section titles in the order they appear. Each title should be the FULL title as it appears in the text (e.g. "Chapter 1: The Beginning" not just "Chapter 1"). If you find a table of contents, use it to identify ALL sections even if they're beyond the provided text.
+IMPORTANT: If the text contains a Table of Contents (TOC), use it to learn what sections exist, but return the titles as they would appear as STANDALONE HEADINGS in the body text — not as TOC line items. TOC entries often include page numbers or extra formatting that won't match the actual chapter headings. Return clean heading titles only.
+
+Return a JSON array of section titles in the order they appear. Each title should be the FULL title as it appears as a heading in the body text (e.g. "Chapter 1: The Beginning" not just "Chapter 1").
 
 If you cannot identify any clear structure, return ["Full Text"].
 
@@ -95,32 +97,36 @@ ${sampleText}`,
       return fallbackChapterSplit(fullText);
     }
 
-    // Now split the text at each section boundary
-    const chapters: ExtractedChapter[] = [];
+    // Find each section title in order, enforcing monotonically increasing positions
+    // so we skip TOC entries and match actual chapter headings in the body
+    const foundSections: { title: string; startIdx: number }[] = [];
+    let searchFrom = 0;
 
     for (let i = 0; i < sectionTitles.length; i++) {
       const title = sectionTitles[i]!;
-      // Search for section title in full text (case-insensitive, flexible whitespace)
       const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
       const titleRegex = new RegExp(escapedTitle, "i");
-      const match = fullText.match(titleRegex);
+
+      // Search only in text after the previous match to skip TOC occurrences
+      const searchSlice = fullText.substring(searchFrom);
+      const match = searchSlice.match(titleRegex);
 
       if (!match || match.index === undefined) continue;
 
-      const startIdx = match.index;
+      const startIdx = searchFrom + match.index;
+      searchFrom = startIdx + match[0].length;
 
-      // Find end: start of next section or end of text
-      let endIdx = fullText.length;
-      for (let j = i + 1; j < sectionTitles.length; j++) {
-        const nextTitle = sectionTitles[j]!;
-        const escapedNext = nextTitle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-        const nextRegex = new RegExp(escapedNext, "i");
-        const nextMatch = fullText.match(nextRegex);
-        if (nextMatch && nextMatch.index !== undefined && nextMatch.index > startIdx) {
-          endIdx = nextMatch.index;
-          break;
-        }
-      }
+      foundSections.push({ title, startIdx });
+    }
+
+    // Now split text between consecutive found positions
+    const chapters: ExtractedChapter[] = [];
+
+    for (let i = 0; i < foundSections.length; i++) {
+      const { title, startIdx } = foundSections[i]!;
+      const endIdx = i + 1 < foundSections.length
+        ? foundSections[i + 1]!.startIdx
+        : fullText.length;
 
       const chapterText = fullText.substring(startIdx, endIdx).trim();
       if (chapterText.length > 50) {
@@ -133,10 +139,10 @@ ${sampleText}`,
     }
 
     // If we found any content before the first detected section, include it
-    if (chapters.length > 0) {
-      const firstChapterStart = fullText.indexOf(chapters[0]!.text);
-      if (firstChapterStart > 200) {
-        const prefaceText = fullText.substring(0, firstChapterStart).trim();
+    if (chapters.length > 0 && foundSections.length > 0) {
+      const firstSectionStart = foundSections[0]!.startIdx;
+      if (firstSectionStart > 200) {
+        const prefaceText = fullText.substring(0, firstSectionStart).trim();
         if (prefaceText.length > 50) {
           chapters.unshift({
             title: "Front Matter",
