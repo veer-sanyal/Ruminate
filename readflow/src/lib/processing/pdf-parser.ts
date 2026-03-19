@@ -2,20 +2,27 @@ import type { ExtractionResult, ExtractedChapter } from "./extract";
 
 /**
  * Parse PDF file from a buffer.
- * Uses pdf-parse for Node.js-compatible text extraction.
+ * Uses unpdf which works in serverless environments (no DOMMatrix/canvas needed).
  */
 export async function parsePdf(
   fileBuffer: ArrayBuffer
 ): Promise<ExtractionResult> {
   try {
-    const pdfParse = (await import("pdf-parse")).default;
-    const buffer = Buffer.from(fileBuffer);
-    const data = await pdfParse(buffer);
+    const { extractText, getMeta } = await import("unpdf");
 
-    const fullText = data.text;
+    const { text: fullText, totalPages } = await extractText(
+      new Uint8Array(fileBuffer)
+    );
 
     if (!fullText || fullText.trim().length === 0) {
       throw new Error("No text could be extracted from the PDF");
+    }
+
+    let meta: { info?: Record<string, string> } = {};
+    try {
+      meta = await getMeta(new Uint8Array(fileBuffer));
+    } catch {
+      // metadata extraction is optional
     }
 
     const chapters: ExtractedChapter[] = [];
@@ -43,9 +50,9 @@ export async function parsePdf(
       }
     }
 
-    // Fallback: split into sections by page breaks or large gaps
+    // Fallback: split into sections by page breaks or size
     if (chapters.length === 0) {
-      const pages = fullText.split(/\f/); // form feed = page break
+      const pages = fullText.split(/\f/);
       if (pages.length > 1) {
         const pagesPerChapter = Math.max(1, Math.ceil(pages.length / 10));
         for (let i = 0; i < pages.length; i += pagesPerChapter) {
@@ -76,8 +83,8 @@ export async function parsePdf(
     return {
       chapters,
       metadata: {
-        title: data.info?.Title || undefined,
-        author: data.info?.Author || undefined,
+        title: meta.info?.Title || undefined,
+        author: meta.info?.Author || undefined,
       },
     };
   } catch (error) {
