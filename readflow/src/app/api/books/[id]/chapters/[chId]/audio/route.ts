@@ -126,8 +126,21 @@ export async function POST(
 
     return NextResponse.json({ audio_url: urlData.publicUrl });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "TTS generation failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    let message = "TTS generation failed";
+    let status = 500;
+
+    if (error instanceof Error) {
+      // Parse Gemini quota/rate-limit errors
+      if (error.message.includes("RESOURCE_EXHAUSTED") || error.message.includes("429")) {
+        message = "TTS quota exceeded. Please try again later.";
+        status = 429;
+      } else if (error.message.includes("Storage error")) {
+        message = error.message;
+      } else {
+        message = "Audio generation failed. Please retry.";
+      }
+    }
+
+    return NextResponse.json({ error: message }, { status });
   }
 }

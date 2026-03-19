@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { useParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { useChapter } from "@/hooks/useChapter";
 import { useChapters } from "@/hooks/useChapters";
 import { useAudioPlayer } from "@/hooks/useAudioPlayer";
@@ -25,6 +26,7 @@ import Skeleton from "@/components/ui/Skeleton";
 
 export default function ReaderPage() {
   const { bookId, chId } = useParams<{ bookId: string; chId: string }>();
+  const queryClient = useQueryClient();
   const { data: chapter, isLoading: chapterLoading } = useChapter(bookId, chId);
   const { data: chapters } = useChapters(bookId);
   const { togglePlayPause, currentWordIndex, reset, seek: storeSeek } = useReaderStore();
@@ -33,6 +35,7 @@ export default function ReaderPage() {
   const [showComplete, setShowComplete] = useState(false);
   const [audioError, setAudioError] = useState(false);
   const [generatingAudio, setGeneratingAudio] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   // Initialize reader hooks
   useCheckpoints();
@@ -48,6 +51,8 @@ export default function ReaderPage() {
   useEffect(() => {
     if (!chapter || chapter.audio_url) return;
 
+    let cancelled = false;
+
     async function generateAudio() {
       setGeneratingAudio(true);
       setAudioError(false);
@@ -57,16 +62,22 @@ export default function ReaderPage() {
           { method: "POST" }
         );
         if (!res.ok) throw new Error("Failed to generate audio");
-        // Audio URL will be available on next chapter fetch
+        // Refetch chapter to pick up the new audio_url
+        if (!cancelled) {
+          await queryClient.invalidateQueries({
+            queryKey: ["chapter", bookId, chId],
+          });
+        }
       } catch {
-        setAudioError(true);
+        if (!cancelled) setAudioError(true);
       } finally {
-        setGeneratingAudio(false);
+        if (!cancelled) setGeneratingAudio(false);
       }
     }
 
     generateAudio();
-  }, [chapter, bookId, chId]);
+    return () => { cancelled = true; };
+  }, [chapter?.audio_url, bookId, chId, queryClient, retryCount]);
 
   // Audio player
   const { seekTo, getDuration, isLoading: audioLoading } = useAudioPlayer({
@@ -167,7 +178,7 @@ export default function ReaderPage() {
                 audioError
                   ? () => {
                       setAudioError(false);
-                      setGeneratingAudio(true);
+                      setRetryCount((c) => c + 1);
                     }
                   : undefined
               }

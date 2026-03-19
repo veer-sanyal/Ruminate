@@ -15,4 +15,4 @@ export const MODEL_PRO = "gemini-3.1-pro-preview";
 export const MODEL_FLASH = "gemini-3-flash-preview";
 
 /** Model for text-to-speech */
-export const MODEL_TTS = "gemini-2.5-pro-preview-tts";
+export const MODEL_TTS = "gemini-2.5-flash-preview-tts";
