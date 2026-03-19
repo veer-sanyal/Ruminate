@@ -1,9 +1,16 @@
 import type { ExtractionResult, ExtractedChapter } from "./extract";
+import { detectDividerPattern } from "./divider-detect";
+import { labelSections } from "./section-labeler";
 import { ai, MODEL_FLASH } from "@/lib/gemini";
 
 /**
  * Parse PDF file from a buffer.
  * Uses unpdf which works in serverless environments (no DOMMatrix/canvas needed).
+ *
+ * Strategy:
+ * 1. Extract full text with unpdf
+ * 2. Try divider-based splitting first (deterministic, reliable)
+ * 3. Fall back to LLM structure detection if no dividers found
  */
 export async function parsePdf(
   fileBuffer: ArrayBuffer
@@ -15,7 +22,6 @@ export async function parsePdf(
       new Uint8Array(fileBuffer)
     );
 
-    // unpdf returns text as string or string[] depending on version
     const fullText = Array.isArray(rawText) ? rawText.join("\n\n") : rawText;
 
     if (!fullText || fullText.trim().length === 0) {
@@ -29,8 +35,17 @@ export async function parsePdf(
       // metadata extraction is optional
     }
 
-    // Use LLM to detect chapter/section boundaries
-    const chapters = await detectChaptersWithLlm(fullText);
+    // Strategy 1: Divider-based splitting
+    const divider = detectDividerPattern(fullText);
+    let chapters: ExtractedChapter[];
+
+    if (divider) {
+      console.log(`[PDF Parser] Found divider pattern: ${divider.name} (${divider.count} occurrences)`);
+      chapters = await splitByDividers(fullText, divider.pattern);
+    } else {
+      console.log("[PDF Parser] No divider pattern found, using LLM fallback");
+      chapters = await splitByLlmFallback(fullText);
+    }
 
     return {
       chapters,
@@ -48,396 +63,161 @@ export async function parsePdf(
 }
 
 /**
- * Use Gemini to detect chapter/section boundaries in extracted text.
- * Handles standard chapters, intros, author's notes, appendices, etc.
+ * Split text using detected divider patterns, then label sections via LLM.
  */
-async function detectChaptersWithLlm(
-  fullText: string
+async function splitByDividers(
+  fullText: string,
+  pattern: RegExp
 ): Promise<ExtractedChapter[]> {
-  // Send first portion of text to LLM for structure detection
-  // We send enough to capture the table of contents or early chapter patterns
-  const sampleText = fullText.substring(0, 20000);
+  const rawSections = fullText.split(pattern).filter(s => s.trim().length > 50);
+
+  console.log(`[PDF Parser] Divider split produced ${rawSections.length} raw sections`);
+
+  // Label sections via LLM
+  const labeled = await labelSections(
+    rawSections.map((text, index) => ({ index, text }))
+  );
+
+  const chapters: ExtractedChapter[] = [];
+  let sortOrder = 0;
+
+  for (const label of labeled) {
+    if (!label.include) continue;
+    if (label.index >= rawSections.length) continue;
+
+    const sectionText = rawSections[label.index]!.trim();
+    if (sectionText.length < 100) continue;
+
+    chapters.push({
+      title: label.title,
+      text: sectionText,
+      sortOrder: sortOrder++,
+    });
+  }
+
+  // If labeling produced nothing useful, just use all sections with generic titles
+  if (chapters.length === 0) {
+    return rawSections
+      .filter(s => s.trim().length > 100)
+      .map((text, i) => ({
+        title: `Section ${i + 1}`,
+        text: text.trim(),
+        sortOrder: i,
+      }));
+  }
+
+  console.log(`[PDF Parser] Final chapters from dividers:`, chapters.map(c => `${c.title} (${c.text.length} chars)`));
+  return chapters;
+}
+
+/**
+ * LLM fallback: ask for exact first lines of each chapter, then find them by exact string search.
+ */
+async function splitByLlmFallback(fullText: string): Promise<ExtractedChapter[]> {
+  const sampleText = fullText.substring(0, 30000);
 
   try {
     const response = await ai.models.generateContent({
       model: MODEL_FLASH,
-      contents: `You are analyzing the extracted text of a book/document to identify its structure. Below is the beginning of the text (first ~20000 characters). Identify all chapter/section boundaries.
+      contents: `Analyze this book text and identify chapter/section boundaries.
 
-Look for ANY structural divisions including but not limited to:
-- Chapters (Chapter 1, Chapter One, I, II, etc.)
-- Parts (Part 1, Part One, etc.)
-- Named sections (Introduction, Preface, Foreword, Author's Note, Prologue, Epilogue, Conclusion, Afterword, Acknowledgments, About the Author, Appendix, etc.)
-- Numbered sections without "Chapter" prefix
-- Any other clear structural breaks
+For each section, return the EXACT text of the first line/heading as it appears in the body text
+(not as it appears in a table of contents). Copy it character-for-character.
 
-IMPORTANT: If the text contains a Table of Contents (TOC), use it to learn what sections exist, but return the titles as they would appear as STANDALONE HEADINGS in the body text — not as TOC line items. TOC entries often include page numbers or extra formatting that won't match the actual chapter headings. Return clean heading titles only.
+Return a JSON array of objects:
+[{"first_line": "exact first line text", "suggested_title": "Clean Title"}]
 
-Return a JSON array of section titles in the order they appear. Each title should be the FULL title as it appears as a heading in the body text (e.g. "Chapter 1: The Beginning" not just "Chapter 1").
+If you cannot find clear sections, return [{"first_line": "NONE", "suggested_title": "Full Text"}].
 
-If you cannot identify any clear structure, return ["Full Text"].
+Return ONLY the JSON array.
 
-IMPORTANT: Return ONLY the JSON array, no other text. Example:
-["Author's Note", "Introduction", "Chapter 1: Getting Started", "Chapter 2: The Journey", "Conclusion", "Acknowledgments"]
-
-Text to analyze:
+Text:
 ${sampleText}`,
     });
 
-    const responseText = response.text?.trim() ?? "[]";
-    // Extract JSON from response (handle potential markdown code blocks)
-    const jsonMatch = responseText.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) {
-      console.warn("[Chapter Detection] LLM did not return valid JSON, falling back");
-      return fallbackChapterSplit(fullText);
+    const text = response.text?.trim() ?? "[]";
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return fallbackEqualSplit(fullText);
+
+    const sections: { first_line: string; suggested_title: string }[] = JSON.parse(jsonMatch[0]);
+
+    if (sections.length <= 1 && sections[0]?.first_line === "NONE") {
+      return fallbackEqualSplit(fullText);
     }
 
-    const sectionTitles: string[] = JSON.parse(jsonMatch[0]);
-    console.log("[Chapter Detection] LLM returned titles:", JSON.stringify(sectionTitles));
+    // Find positions by exact string search
+    const allPositions = sections
+      .map(s => ({ ...s, pos: fullText.indexOf(s.first_line) }))
+      .filter(s => s.pos >= 0);
 
-    if (!sectionTitles.length || (sectionTitles.length === 1 && sectionTitles[0] === "Full Text")) {
-      return fallbackChapterSplit(fullText);
-    }
-
-    // Find section positions using fuzzy matching with TOC-skip logic
-    const tocSkipResult = findSectionsWithTocSkip(fullText, sectionTitles);
-    const foundSections = tocSkipResult.sections;
-    const tocRegion = tocSkipResult.tocRegion;
-    console.log("[Chapter Detection] Found sections:", foundSections.map(s => `${s.title} @${s.startIdx}`));
-
-    // If fuzzy matching found very few sections, try pattern-based detection
-    if (foundSections.length < Math.min(3, sectionTitles.length) && sectionTitles.length >= 3) {
-      console.log("[Chapter Detection] Too few matches, trying pattern-based detection");
-      const patternSections = findChaptersByPattern(fullText, sectionTitles);
-      if (patternSections.length > foundSections.length) {
-        console.log("[Chapter Detection] Pattern-based found more:", patternSections.length);
-        foundSections.length = 0;
-        foundSections.push(...patternSections);
+    // Skip past TOC region: find the largest gap between consecutive matches
+    let searchFrom = 0;
+    if (allPositions.length >= 3) {
+      let maxGap = 0, gapIdx = 0;
+      for (let i = 1; i < allPositions.length; i++) {
+        const gap = allPositions[i]!.pos - allPositions[i - 1]!.pos;
+        if (gap > maxGap) { maxGap = gap; gapIdx = i; }
+      }
+      const avgBefore = gapIdx > 0 ? allPositions[gapIdx - 1]!.pos / gapIdx : 0;
+      if (maxGap > avgBefore * 5 && gapIdx > 0) {
+        searchFrom = allPositions[gapIdx]!.pos;
       }
     }
 
-    // Now split text between consecutive found positions
-    const chapters: ExtractedChapter[] = [];
+    const found: { title: string; startIdx: number }[] = [];
+    let cursor = searchFrom;
 
-    for (let i = 0; i < foundSections.length; i++) {
-      const { title, startIdx } = foundSections[i]!;
-      const endIdx = i + 1 < foundSections.length
-        ? foundSections[i + 1]!.startIdx
-        : fullText.length;
-
-      const chapterText = fullText.substring(startIdx, endIdx).trim();
-      if (chapterText.length > 50) {
-        chapters.push({
-          title,
-          text: chapterText,
-          sortOrder: chapters.length,
-        });
+    for (const section of sections) {
+      const pos = fullText.indexOf(section.first_line, cursor);
+      if (pos >= 0) {
+        found.push({ title: section.suggested_title, startIdx: pos });
+        cursor = pos + section.first_line.length;
       }
     }
 
-    // If we found any content before the first detected section, include it
-    if (chapters.length > 0 && foundSections.length > 0) {
-      const firstSectionStart = foundSections[0]!.startIdx;
-      if (firstSectionStart > 200) {
-        const prefaceText = fullText.substring(0, firstSectionStart).trim();
-        if (prefaceText.length > 50) {
-          chapters.unshift({
-            title: "Front Matter",
-            text: prefaceText,
-            sortOrder: 0,
-          });
-        }
-      }
-    }
+    if (found.length === 0) return fallbackEqualSplit(fullText);
 
-    // If a TOC region was detected, insert it as a chapter between Front Matter and body
-    if (tocRegion && chapters.length > 0) {
-      const tocText = fullText.substring(tocRegion.startIdx, tocRegion.endIdx).trim();
-      if (tocText.length > 50) {
-        // Insert after Front Matter if it exists, otherwise at start
-        const insertIdx = chapters[0]?.title === "Front Matter" ? 1 : 0;
-        chapters.splice(insertIdx, 0, {
-          title: "Table of Contents",
-          text: tocText,
-          sortOrder: insertIdx,
-        });
-      }
-    }
-
-    // Re-index sort orders
-    chapters.forEach((ch, idx) => { ch.sortOrder = idx; });
-
-    if (chapters.length === 0) {
-      return fallbackChapterSplit(fullText);
-    }
-
-    console.log("[Chapter Detection] Final chapters:", chapters.map(c => `${c.title} (${c.text.length} chars)`));
-    return chapters;
+    // Split text between found positions
+    return found.map((f, i) => ({
+      title: f.title,
+      text: fullText.substring(f.startIdx, found[i + 1]?.startIdx ?? fullText.length).trim(),
+      sortOrder: i,
+    }));
   } catch (error) {
-    console.error("[Chapter Detection] LLM error, falling back:", error);
-    return fallbackChapterSplit(fullText);
+    console.error("[PDF Parser] LLM fallback error:", error);
+    return fallbackEqualSplit(fullText);
   }
-}
-
-interface TocSkipResult {
-  sections: { title: string; startIdx: number }[];
-  tocRegion: { startIdx: number; endIdx: number } | null;
 }
 
 /**
- * Find section positions with TOC-cluster detection.
- * Pass 1: find first occurrences. If they cluster (TOC), Pass 2: re-search after cluster.
- * Uses fuzzy matching: tries full title, then partial matches.
- * Returns both the found sections and any detected TOC region boundaries.
+ * Final fallback: split text into roughly equal chunks.
  */
-function findSectionsWithTocSkip(
-  fullText: string,
-  sectionTitles: string[]
-): TocSkipResult {
-  const pass1 = findSectionPositionsFuzzy(fullText, sectionTitles, 0);
+function fallbackEqualSplit(fullText: string): ExtractedChapter[] {
+  const CHUNK_SIZE = 15000;
+  const chunks: ExtractedChapter[] = [];
+  let pos = 0, idx = 0;
 
-  // Detect TOC cluster: all matches bunched in first portion, bulk of text after
-  if (pass1.length >= 2) {
-    const firstMatchStart = pass1[0]!.startIdx;
-    const lastMatchEnd = pass1[pass1.length - 1]!.startIdx;
-    const textAfterLastMatch = fullText.length - lastMatchEnd;
-    if (textAfterLastMatch > fullText.length * 0.5) {
-      console.log("[Chapter Detection] TOC cluster detected, re-searching body from offset", lastMatchEnd);
-      const pass2 = findSectionPositionsFuzzy(fullText, sectionTitles, lastMatchEnd + 1);
-      if (pass2.length >= 2) {
-        return {
-          sections: pass2,
-          tocRegion: { startIdx: firstMatchStart, endIdx: lastMatchEnd + 200 },
-        };
-      }
+  while (pos < fullText.length) {
+    let end = Math.min(pos + CHUNK_SIZE, fullText.length);
+    // Find paragraph break near the end
+    if (end < fullText.length) {
+      const paraBreak = fullText.lastIndexOf("\n\n", end);
+      if (paraBreak > pos + CHUNK_SIZE * 0.5) end = paraBreak;
     }
-  }
-
-  return { sections: pass1, tocRegion: null };
-}
-
-/**
- * Find section title positions using fuzzy matching.
- * For each title, tries multiple matching strategies:
- * 1. Full title match
- * 2. Title prefix (before ":" or "—")
- * 3. Title suffix (after ":" or "—")
- * 4. Key words only (for long titles)
- */
-function findSectionPositionsFuzzy(
-  fullText: string,
-  sectionTitles: string[],
-  startFrom: number
-): { title: string; startIdx: number }[] {
-  const results: { title: string; startIdx: number }[] = [];
-  let searchFrom = startFrom;
-
-  for (const title of sectionTitles) {
-    const matchIdx = fuzzyFindTitle(fullText, title, searchFrom);
-
-    if (matchIdx === -1) {
-      console.log("[Chapter Detection] No match for:", title, "from offset", searchFrom);
-      continue;
+    const text = fullText.substring(pos, end).trim();
+    if (text.length > 0) {
+      chunks.push({
+        title: `Part ${idx + 1}`,
+        text,
+        sortOrder: idx++,
+      });
     }
-
-    searchFrom = matchIdx + title.length;
-    results.push({ title, startIdx: matchIdx });
+    pos = end;
   }
 
-  return results;
-}
-
-/**
- * Try to find a title in the text using progressively relaxed strategies.
- */
-function fuzzyFindTitle(fullText: string, title: string, searchFrom: number): number {
-  const searchSlice = fullText.substring(searchFrom);
-  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-
-  // Strategy 1: Full title, flexible whitespace
-  const fullMatch = searchSlice.match(new RegExp(esc(title), "i"));
-  if (fullMatch?.index !== undefined) {
-    return searchFrom + fullMatch.index;
+  if (chunks.length === 0) {
+    chunks.push({ title: "Full Text", text: fullText.trim(), sortOrder: 0 });
   }
 
-  // Strategy 2: Strip leading number prefix ("1. Title" → "Title", "1: Title" → "Title")
-  const numberPrefixMatch = title.match(/^\d+[\.\:\)\s]+\s*/);
-  const titleWithoutNumber = numberPrefixMatch
-    ? title.substring(numberPrefixMatch[0].length).trim()
-    : null;
-
-  if (titleWithoutNumber && titleWithoutNumber.length > 5) {
-    const numlessMatch = searchSlice.match(new RegExp(esc(titleWithoutNumber), "i"));
-    if (numlessMatch?.index !== undefined) {
-      return searchFrom + numlessMatch.index;
-    }
-  }
-
-  // Strategy 3: Split on separators (":" "—" "-") and try suffix (the unique part)
-  const separators = [":", "—", " - "];
-  for (const sep of separators) {
-    const sepIdx = title.indexOf(sep);
-    if (sepIdx <= 0) continue;
-    const suffix = title.substring(sepIdx + sep.length).trim();
-    if (suffix.length > 5) {
-      const suffixMatch = searchSlice.match(new RegExp(esc(suffix), "i"));
-      if (suffixMatch?.index !== undefined) {
-        return searchFrom + suffixMatch.index;
-      }
-    }
-  }
-
-  // Strategy 4: Known named sections — match as standalone line headings
-  // Catches "INTRODUCTION", "PREFACE", etc. that appear as all-caps headings on their own line
-  const namedSections = [
-    "introduction", "preface", "foreword", "prologue", "epilogue",
-    "conclusion", "afterword", "acknowledgments", "acknowledgements",
-    "about the author", "appendix", "author's note",
-  ];
-  const titleLower = title.toLowerCase().trim();
-  for (const section of namedSections) {
-    if (titleLower.includes(section)) {
-      const headingMatch = searchSlice.match(new RegExp(`^\\s*${section}\\s*$`, "im"));
-      if (headingMatch?.index !== undefined) {
-        return searchFrom + headingMatch.index;
-      }
-    }
-  }
-
-  return -1;
-}
-
-/**
- * Fallback: find chapters by detecting heading patterns directly in the text.
- * Looks for "Chapter N", standalone numbers, and named sections.
- */
-function findChaptersByPattern(
-  fullText: string,
-  llmTitles: string[]
-): { title: string; startIdx: number }[] {
-  const results: { title: string; startIdx: number }[] = [];
-  let match: RegExpExecArray | null;
-
-  // Pattern 1: "Chapter N" (with optional subtitle)
-  const chapterPattern = /\n\s*(chapter\s+(\d+|[a-z]+)(?:\s*[:\-—]\s*[^\n]*)?)\s*\n/gi;
-  while ((match = chapterPattern.exec(fullText)) !== null) {
-    results.push({ title: match[1]!.trim(), startIdx: match.index + 1 });
-  }
-
-  // Pattern 2: Standalone number on its own line (common in PDF extraction for chapter numbers)
-  // Match a line that's just a number, possibly followed by a title on the next line
-  const standaloneNumPattern = /\n\s*(\d{1,2})\s*\n\s*([^\n]{5,80})\s*\n/g;
-  while ((match = standaloneNumPattern.exec(fullText)) !== null) {
-    const num = match[1]!;
-    const titleAfter = match[2]!.trim();
-    // Skip if this looks like a page number (preceded by lots of text on same logical page)
-    // or if number is > 30 (unlikely chapter count)
-    if (parseInt(num) > 30) continue;
-    if (!results.some(r => Math.abs(r.startIdx - match!.index) < 100)) {
-      results.push({ title: `${num}. ${titleAfter}`, startIdx: match.index + 1 });
-    }
-  }
-
-  // Pattern 3: Named sections (intro, conclusion, etc.)
-  const namedSectionPattern = /\n\s*((?:introduction|preface|foreword|prologue|epilogue|conclusion|afterword|acknowledgments?|about the author|appendix)(?:\s*[:\-—]\s*[^\n]*)?)\s*\n/gi;
-  while ((match = namedSectionPattern.exec(fullText)) !== null) {
-    const startIdx = match.index + 1;
-    if (!results.some(r => Math.abs(r.startIdx - startIdx) < 100)) {
-      results.push({ title: match[1]!.trim(), startIdx });
-    }
-  }
-
-  // Sort by position
-  results.sort((a, b) => a.startIdx - b.startIdx);
-
-  // Skip TOC cluster: find where body content starts by looking for a gap
-  // In a TOC, entries are close together; in the body, chapters are far apart
-  if (results.length >= 4) {
-    // Find the largest gap between consecutive matches
-    let maxGap = 0;
-    let gapIdx = 0;
-    for (let i = 1; i < results.length; i++) {
-      const gap = results[i]!.startIdx - results[i - 1]!.startIdx;
-      if (gap > maxGap) {
-        maxGap = gap;
-        gapIdx = i;
-      }
-    }
-    // If the largest gap is significantly bigger than the average gap before it,
-    // everything before the gap is likely the TOC
-    if (gapIdx > 0) {
-      const avgGapBefore = results[gapIdx - 1]!.startIdx / gapIdx;
-      if (maxGap > avgGapBefore * 5 && gapIdx < results.length - 1) {
-        console.log("[Chapter Detection] Pattern: skipping TOC entries before gap at index", gapIdx);
-        results.splice(0, gapIdx);
-      }
-    }
-  }
-
-  // Cross-reference with LLM titles to use cleaner names
-  for (const result of results) {
-    const lowerResult = result.title.toLowerCase();
-    for (const llmTitle of llmTitles) {
-      const lowerLlm = llmTitle.toLowerCase();
-      // Match by shared number or significant text overlap
-      const numMatch = lowerResult.match(/^(\d+)/);
-      const llmNumMatch = lowerLlm.match(/^(\d+)/);
-      if (numMatch && llmNumMatch && numMatch[1] === llmNumMatch[1]) {
-        result.title = llmTitle;
-        break;
-      }
-      // Match by chapter number
-      const chapterNum = lowerResult.match(/chapter\s+(\d+)/)?.[1];
-      if (chapterNum && lowerLlm.includes(`chapter ${chapterNum}`)) {
-        result.title = llmTitle;
-        break;
-      }
-      // Match by title text overlap (at least 80% of words match)
-      const resultWords = lowerResult.replace(/^\d+[\.\:\)]\s*/, "").split(/\s+/);
-      const llmWords = lowerLlm.replace(/^\d+[\.\:\)]\s*/, "").split(/\s+/);
-      if (resultWords.length >= 3) {
-        const overlap = resultWords.filter(w => llmWords.includes(w)).length;
-        if (overlap >= resultWords.length * 0.8) {
-          result.title = llmTitle;
-          break;
-        }
-      }
-    }
-  }
-
-  return results;
-}
-
-/**
- * Fallback: split text into roughly equal sections by page breaks or size.
- */
-function fallbackChapterSplit(fullText: string): ExtractedChapter[] {
-  const chapters: ExtractedChapter[] = [];
-  const pages = fullText.split(/\f/);
-
-  if (pages.length > 1) {
-    const pagesPerChapter = Math.max(1, Math.ceil(pages.length / 10));
-    for (let i = 0; i < pages.length; i += pagesPerChapter) {
-      const chapterText = pages
-        .slice(i, i + pagesPerChapter)
-        .join("\n\n")
-        .trim();
-      if (chapterText.length > 0) {
-        chapters.push({
-          title: `Section ${Math.floor(i / pagesPerChapter) + 1}`,
-          text: chapterText,
-          sortOrder: chapters.length,
-        });
-      }
-    }
-  }
-
-  if (chapters.length === 0) {
-    chapters.push({
-      title: "Full Text",
-      text: fullText.trim(),
-      sortOrder: 0,
-    });
-  }
-
-  return chapters;
+  return chunks;
 }

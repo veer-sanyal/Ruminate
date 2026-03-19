@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { ai, MODEL_TTS } from "@/lib/gemini";
+import { openai } from "@/lib/openai";
+import { alignTimestamps } from "@/lib/processing/timestamp-align";
+import type { WordTimestamp } from "@/lib/utils/audio-utils";
 
-// Map our voice names to Gemini prebuilt voices
-const VOICE_MAP: Record<string, string> = {
-  alloy: "Kore",
-  echo: "Puck",
-  nova: "Aoede",
-  shimmer: "Leda",
-};
+export const maxDuration = 120;
+
+const VALID_VOICES = ["alloy", "ash", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"] as const;
+type Voice = typeof VALID_VOICES[number];
 
 export async function POST(
   request: Request,
@@ -68,17 +67,59 @@ export async function POST(
       .single();
 
     const userVoice = profile?.preferred_voice ?? "alloy";
-    const geminiVoice = VOICE_MAP[userVoice] ?? "Kore";
+    const voice: Voice = VALID_VOICES.includes(userVoice as Voice)
+      ? (userVoice as Voice)
+      : "alloy";
 
-    // Generate TTS audio via Gemini Live API (handles full chapter text)
     const fullText = chapter.raw_text;
-    console.log(`[TTS] Generating audio for chapter ${chId}, full text length: ${fullText.length}`);
+    console.log(`[TTS] Generating audio for chapter ${chId}, text length: ${fullText.length}, voice: ${voice}`);
 
-    const audioBuffer = await generateAudioViaBatchChunking(fullText, geminiVoice);
+    // Split into chunks at sentence boundaries (OpenAI TTS limit ~4096 chars)
+    const chunks = splitTextIntoChunks(fullText, 4096);
+    console.log(`[TTS] ${chunks.length} chunks`);
 
-    const uploadMimeType = "audio/wav";
+    // Generate MP3 for each chunk
+    const mp3Buffers: Buffer[] = [];
+    for (let i = 0; i < chunks.length; i++) {
+      console.log(`[TTS] Generating chunk ${i + 1}/${chunks.length} (${chunks[i]!.length} chars)`);
 
-    const audioPath = `${user.id}/${id}/${chId}.wav`;
+      const mp3Response = await openai.audio.speech.create({
+        model: "gpt-4o-mini-tts",
+        voice,
+        input: chunks[i]!,
+        instructions: "Read this book passage naturally, as an audiobook narrator. Maintain a warm, steady pace.",
+        response_format: "mp3",
+        speed: 1.0,
+      });
+
+      const arrayBuffer = await mp3Response.arrayBuffer();
+      mp3Buffers.push(Buffer.from(arrayBuffer));
+    }
+
+    // Concatenate MP3 buffers (MP3 frames are independently decodable)
+    const audioBuffer = Buffer.concat(mp3Buffers);
+    console.log(`[TTS] Total audio: ${audioBuffer.length} bytes`);
+
+    // Run through Whisper for word-level timestamps
+    console.log("[TTS] Running Whisper for word timestamps...");
+    const audioFile = new File([audioBuffer], "chapter.mp3", { type: "audio/mpeg" });
+
+    const transcription = await openai.audio.transcriptions.create({
+      file: audioFile,
+      model: "whisper-1",
+      response_format: "verbose_json",
+      timestamp_granularities: ["word"],
+    });
+
+    // Align Whisper words to original text
+    const whisperWords = (transcription as { words?: { word: string; start: number; end: number }[] }).words ?? [];
+    console.log(`[TTS] Whisper returned ${whisperWords.length} words`);
+
+    const timestamps: WordTimestamp[] = alignTimestamps(fullText, whisperWords);
+    console.log(`[TTS] Aligned ${timestamps.length} word timestamps`);
+
+    // Upload audio to Supabase Storage
+    const audioPath = `${user.id}/${id}/${chId}.mp3`;
 
     // Ensure audio-cache bucket exists
     const { data: buckets } = await adminSupabase.storage.listBuckets();
@@ -87,12 +128,11 @@ export async function POST(
       await adminSupabase.storage.createBucket("audio-cache", { public: true });
     }
 
-    // Upload audio to storage
     console.log(`[TTS] Uploading ${audioBuffer.length} bytes to ${audioPath}`);
     const { error: storageError } = await adminSupabase.storage
       .from("audio-cache")
       .upload(audioPath, audioBuffer, {
-        contentType: uploadMimeType,
+        contentType: "audio/mpeg",
         upsert: true,
       });
 
@@ -106,11 +146,12 @@ export async function POST(
       .from("audio-cache")
       .getPublicUrl(audioPath);
 
-    // Update chapter record
+    // Update chapter record with audio URL and timestamps
     const { error: updateError } = await adminSupabase
       .from("chapters")
       .update({
         audio_url: urlData.publicUrl,
+        audio_timestamps: timestamps,
       })
       .eq("id", chId);
 
@@ -120,7 +161,10 @@ export async function POST(
     }
 
     console.log(`[TTS] Audio ready: ${urlData.publicUrl}`);
-    return NextResponse.json({ audio_url: urlData.publicUrl });
+    return NextResponse.json({
+      audio_url: urlData.publicUrl,
+      audio_timestamps: timestamps,
+    });
   } catch (error) {
     console.error("[TTS] Error:", error instanceof Error ? error.message : error);
     console.error("[TTS] Stack:", error instanceof Error ? error.stack : "no stack");
@@ -129,8 +173,7 @@ export async function POST(
     let status = 500;
 
     if (error instanceof Error) {
-      // Parse Gemini quota/rate-limit errors
-      if (error.message.includes("RESOURCE_EXHAUSTED") || error.message.includes("429")) {
+      if (error.message.includes("rate_limit") || error.message.includes("429")) {
         message = "TTS quota exceeded. Please try again later.";
         status = 429;
       } else if (error.message.includes("Storage error") || error.message.includes("DB update error")) {
@@ -147,7 +190,7 @@ export async function POST(
 /**
  * Split text into chunks at sentence boundaries, never exceeding maxChars.
  */
-function splitTextIntoChunks(text: string, maxChars = 4000): string[] {
+function splitTextIntoChunks(text: string, maxChars = 4096): string[] {
   if (text.length <= maxChars) return [text];
 
   const chunks: string[] = [];
@@ -159,7 +202,6 @@ function splitTextIntoChunks(text: string, maxChars = 4000): string[] {
       break;
     }
 
-    // Find the last sentence boundary within maxChars
     const slice = remaining.substring(0, maxChars);
     const sentenceEnd = Math.max(
       slice.lastIndexOf(". "),
@@ -172,9 +214,8 @@ function splitTextIntoChunks(text: string, maxChars = 4000): string[] {
 
     let splitAt: number;
     if (sentenceEnd > maxChars * 0.3) {
-      splitAt = sentenceEnd + 1; // Include the punctuation
+      splitAt = sentenceEnd + 1;
     } else {
-      // No good sentence boundary — split at last space
       const lastSpace = slice.lastIndexOf(" ");
       splitAt = lastSpace > maxChars * 0.3 ? lastSpace : maxChars;
     }
@@ -184,91 +225,4 @@ function splitTextIntoChunks(text: string, maxChars = 4000): string[] {
   }
 
   return chunks;
-}
-
-/**
- * Generate audio via batch API with chunking.
- * Calls generateContent for each chunk and concatenates PCM.
- */
-async function generateAudioViaBatchChunking(text: string, voiceName: string): Promise<Buffer> {
-  const chunks = splitTextIntoChunks(text, 4000);
-  console.log(`[TTS Batch] ${chunks.length} chunks, voice: ${voiceName}`);
-
-  const pcmBuffers: Buffer[] = [];
-  let sampleRate = 24000;
-
-  for (let i = 0; i < chunks.length; i++) {
-    console.log(`[TTS Batch] Generating chunk ${i + 1}/${chunks.length} (${chunks[i]!.length} chars)`);
-
-    const response = await ai.models.generateContent({
-      model: MODEL_TTS,
-      contents: chunks[i]!,
-      config: {
-        responseModalities: ["AUDIO"],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: {
-              voiceName,
-            },
-          },
-        },
-      },
-    });
-
-    const part = response.candidates?.[0]?.content?.parts?.[0];
-    const audioData = part?.inlineData;
-
-    if (!audioData?.data) {
-      console.error(`[TTS Batch] No audio data for chunk ${i + 1}`);
-      throw new Error(`No audio data for chunk ${i + 1}`);
-    }
-
-    const rawMimeType = audioData.mimeType ?? "";
-    const rateMatch = rawMimeType.match(/rate=(\d+)/);
-    if (rateMatch?.[1]) {
-      sampleRate = parseInt(rateMatch[1]);
-    }
-
-    pcmBuffers.push(Buffer.from(audioData.data, "base64"));
-  }
-
-  const combinedPcm = Buffer.concat(pcmBuffers);
-  console.log(`[TTS Batch] Total PCM: ${combinedPcm.length} bytes, rate: ${sampleRate}`);
-  return Buffer.from(wrapPcmInWav(combinedPcm, sampleRate));
-}
-
-/**
- * Wrap raw PCM (16-bit signed, mono) data in a WAV container
- * so browsers can play it.
- */
-function wrapPcmInWav(pcmData: Buffer, sampleRate: number): Buffer {
-  const numChannels = 1;
-  const bitsPerSample = 16;
-  const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
-  const blockAlign = numChannels * (bitsPerSample / 8);
-  const dataSize = pcmData.length;
-  const headerSize = 44;
-
-  const header = Buffer.alloc(headerSize);
-
-  // RIFF header
-  header.write("RIFF", 0);
-  header.writeUInt32LE(dataSize + headerSize - 8, 4);
-  header.write("WAVE", 8);
-
-  // fmt chunk
-  header.write("fmt ", 12);
-  header.writeUInt32LE(16, 16); // chunk size
-  header.writeUInt16LE(1, 20); // PCM format
-  header.writeUInt16LE(numChannels, 22);
-  header.writeUInt32LE(sampleRate, 24);
-  header.writeUInt32LE(byteRate, 28);
-  header.writeUInt16LE(blockAlign, 32);
-  header.writeUInt16LE(bitsPerSample, 34);
-
-  // data chunk
-  header.write("data", 36);
-  header.writeUInt32LE(dataSize, 40);
-
-  return Buffer.concat([header, pcmData]);
 }

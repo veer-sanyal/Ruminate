@@ -13,6 +13,3 @@ export const MODEL_PRO = "gemini-3.1-pro-preview";
 
 /** Model for simple/fast tasks: summaries, keyword extraction, basic generation */
 export const MODEL_FLASH = "gemini-3-flash-preview";
-
-/** Model for text-to-speech (batch) */
-export const MODEL_TTS = "gemini-2.5-flash-preview-tts";
