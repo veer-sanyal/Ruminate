@@ -92,30 +92,24 @@ ${sampleText}`,
     }
 
     const sectionTitles: string[] = JSON.parse(jsonMatch[0]);
+    console.log("[Chapter Detection] LLM returned titles:", JSON.stringify(sectionTitles));
 
     if (!sectionTitles.length || (sectionTitles.length === 1 && sectionTitles[0] === "Full Text")) {
       return fallbackChapterSplit(fullText);
     }
 
-    // Search for section titles with TOC-cluster detection.
-    // Pass 1: find first occurrence of each title (monotonically increasing).
-    // If results look like a TOC cluster (all bunched together, bulk of text after),
-    // do Pass 2: re-search starting after the cluster to find body headings.
-    const foundSections = findSectionPositions(fullText, sectionTitles, 0);
+    // Find section positions using fuzzy matching with TOC-skip logic
+    const foundSections = findSectionsWithTocSkip(fullText, sectionTitles);
+    console.log("[Chapter Detection] Found sections:", foundSections.map(s => `${s.title} @${s.startIdx}`));
 
-    // Detect TOC cluster: if we found 3+ titles and the last match position
-    // is in the first 15% of the text, all matches are likely in the TOC
-    if (foundSections.length >= 3) {
-      const lastMatchEnd = foundSections[foundSections.length - 1]!.startIdx;
-      const textAfterLastMatch = fullText.length - lastMatchEnd;
-      if (textAfterLastMatch > fullText.length * 0.5) {
-        // Likely a TOC cluster — re-search starting after the cluster
-        const bodySearchStart = lastMatchEnd + 1;
-        const bodyMatches = findSectionPositions(fullText, sectionTitles, bodySearchStart);
-        if (bodyMatches.length >= 2) {
-          foundSections.length = 0;
-          foundSections.push(...bodyMatches);
-        }
+    // If fuzzy matching found very few sections, try pattern-based detection
+    if (foundSections.length < Math.min(3, sectionTitles.length) && sectionTitles.length >= 3) {
+      console.log("[Chapter Detection] Too few matches, trying pattern-based detection");
+      const patternSections = findChaptersByPattern(fullText, sectionTitles);
+      if (patternSections.length > foundSections.length) {
+        console.log("[Chapter Detection] Pattern-based found more:", patternSections.length);
+        foundSections.length = 0;
+        foundSections.push(...patternSections);
       }
     }
 
@@ -159,6 +153,7 @@ ${sampleText}`,
       return fallbackChapterSplit(fullText);
     }
 
+    console.log("[Chapter Detection] Final chapters:", chapters.map(c => `${c.title} (${c.text.length} chars)`));
     return chapters;
   } catch (error) {
     console.error("[Chapter Detection] LLM error, falling back:", error);
@@ -167,10 +162,41 @@ ${sampleText}`,
 }
 
 /**
- * Find section title positions in fullText starting from a given offset.
- * Uses monotonically increasing positions so each title is found after the previous.
+ * Find section positions with TOC-cluster detection.
+ * Pass 1: find first occurrences. If they cluster (TOC), Pass 2: re-search after cluster.
+ * Uses fuzzy matching: tries full title, then partial matches.
  */
-function findSectionPositions(
+function findSectionsWithTocSkip(
+  fullText: string,
+  sectionTitles: string[]
+): { title: string; startIdx: number }[] {
+  const pass1 = findSectionPositionsFuzzy(fullText, sectionTitles, 0);
+
+  // Detect TOC cluster: all matches bunched in first portion, bulk of text after
+  if (pass1.length >= 3) {
+    const lastMatchEnd = pass1[pass1.length - 1]!.startIdx;
+    const textAfterLastMatch = fullText.length - lastMatchEnd;
+    if (textAfterLastMatch > fullText.length * 0.5) {
+      console.log("[Chapter Detection] TOC cluster detected, re-searching body from offset", lastMatchEnd);
+      const pass2 = findSectionPositionsFuzzy(fullText, sectionTitles, lastMatchEnd + 1);
+      if (pass2.length >= 2) {
+        return pass2;
+      }
+    }
+  }
+
+  return pass1;
+}
+
+/**
+ * Find section title positions using fuzzy matching.
+ * For each title, tries multiple matching strategies:
+ * 1. Full title match
+ * 2. Title prefix (before ":" or "—")
+ * 3. Title suffix (after ":" or "—")
+ * 4. Key words only (for long titles)
+ */
+function findSectionPositionsFuzzy(
   fullText: string,
   sectionTitles: string[],
   startFrom: number
@@ -179,18 +205,144 @@ function findSectionPositions(
   let searchFrom = startFrom;
 
   for (const title of sectionTitles) {
-    const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-    const titleRegex = new RegExp(escapedTitle, "i");
+    const matchIdx = fuzzyFindTitle(fullText, title, searchFrom);
 
-    const searchSlice = fullText.substring(searchFrom);
-    const match = searchSlice.match(titleRegex);
+    if (matchIdx === -1) {
+      console.log("[Chapter Detection] No match for:", title, "from offset", searchFrom);
+      continue;
+    }
 
-    if (!match || match.index === undefined) continue;
+    searchFrom = matchIdx + title.length;
+    results.push({ title, startIdx: matchIdx });
+  }
 
-    const startIdx = searchFrom + match.index;
-    searchFrom = startIdx + match[0].length;
+  return results;
+}
 
+/**
+ * Try to find a title in the text using progressively relaxed strategies.
+ */
+function fuzzyFindTitle(fullText: string, title: string, searchFrom: number): number {
+  const searchSlice = fullText.substring(searchFrom);
+
+  // Strategy 1: Full title, flexible whitespace
+  const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  const fullMatch = searchSlice.match(new RegExp(escaped, "i"));
+  if (fullMatch?.index !== undefined) {
+    return searchFrom + fullMatch.index;
+  }
+
+  // Strategy 2: Split on ":" or "—" or "-" and try prefix and suffix separately
+  const separators = [":", "—", " - "];
+  for (const sep of separators) {
+    const sepIdx = title.indexOf(sep);
+    if (sepIdx > 0) {
+      const prefix = title.substring(0, sepIdx).trim();
+      const suffix = title.substring(sepIdx + sep.length).trim();
+
+      // Try suffix first (more unique, e.g., "The Warm Social World Awaits")
+      if (suffix.length > 5) {
+        const escapedSuffix = suffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+        const suffixMatch = searchSlice.match(new RegExp(escapedSuffix, "i"));
+        if (suffixMatch?.index !== undefined) {
+          // Walk back to find if prefix is nearby (within 50 chars before)
+          const matchPos = searchFrom + suffixMatch.index;
+          const lookback = fullText.substring(Math.max(searchFrom, matchPos - 50), matchPos);
+          const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+          const prefixInLookback = lookback.match(new RegExp(escapedPrefix, "i"));
+          if (prefixInLookback?.index !== undefined) {
+            return Math.max(searchFrom, matchPos - 50) + prefixInLookback.index;
+          }
+          // Even without prefix nearby, the suffix match is decent
+          return matchPos;
+        }
+      }
+
+      // Try just the prefix (e.g., "Chapter 1")
+      if (prefix.length > 3) {
+        const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+        // Require it to be on its own line or followed by a separator/newline
+        const prefixLineRegex = new RegExp(`(?:^|\\n)\\s*${escapedPrefix}\\s*(?:[:\\-—\\n])`, "im");
+        const prefixMatch = searchSlice.match(prefixLineRegex);
+        if (prefixMatch?.index !== undefined) {
+          // Adjust to skip the leading newline
+          const raw = prefixMatch[0];
+          const offset = raw.startsWith("\n") ? 1 : 0;
+          return searchFrom + prefixMatch.index + offset;
+        }
+      }
+    }
+  }
+
+  return -1;
+}
+
+/**
+ * Fallback: find chapters by detecting "Chapter N" patterns directly in the text.
+ * Used when title matching fails because LLM titles don't match body headings.
+ */
+function findChaptersByPattern(
+  fullText: string,
+  llmTitles: string[]
+): { title: string; startIdx: number }[] {
+  // Detect if chapters follow a "Chapter N" pattern
+  const chapterPattern = /\n\s*(chapter\s+(\d+|[a-z]+)(?:\s*[:\-—]\s*[^\n]*)?)\s*\n/gi;
+  const results: { title: string; startIdx: number }[] = [];
+  let match: RegExpExecArray | null;
+
+  // Also look for named sections (intro, conclusion, etc.)
+  const namedSectionPattern = /\n\s*((?:introduction|preface|foreword|prologue|epilogue|conclusion|afterword|acknowledgments?|about the author|appendix)(?:\s*[:\-—]\s*[^\n]*)?)\s*\n/gi;
+
+  // Find chapter-numbered matches
+  while ((match = chapterPattern.exec(fullText)) !== null) {
+    const title = match[1]!.trim();
+    const startIdx = match.index + 1; // skip leading newline
     results.push({ title, startIdx });
+  }
+
+  // Find named section matches
+  while ((match = namedSectionPattern.exec(fullText)) !== null) {
+    const title = match[1]!.trim();
+    const startIdx = match.index + 1;
+    // Only add if not overlapping with an existing chapter match
+    if (!results.some(r => Math.abs(r.startIdx - startIdx) < 100)) {
+      results.push({ title, startIdx });
+    }
+  }
+
+  // Sort by position
+  results.sort((a, b) => a.startIdx - b.startIdx);
+
+  // Skip TOC cluster: if early matches are bunched together
+  if (results.length >= 3) {
+    const lastIdx = results[results.length - 1]!.startIdx;
+    const firstBunchEnd = results[Math.min(results.length - 1, Math.floor(results.length / 2))]!.startIdx;
+    // If first half of matches are in the first 15% of text, they're TOC entries
+    if (firstBunchEnd < fullText.length * 0.15 && lastIdx > fullText.length * 0.3) {
+      // Keep only matches after the 15% mark
+      const cutoff = fullText.length * 0.15;
+      const filtered = results.filter(r => r.startIdx > cutoff);
+      if (filtered.length >= 2) {
+        return filtered;
+      }
+    }
+  }
+
+  // Cross-reference with LLM titles to use better names
+  if (results.length > 0 && llmTitles.length > 0) {
+    for (const result of results) {
+      // Find best matching LLM title
+      const lowerResult = result.title.toLowerCase();
+      for (const llmTitle of llmTitles) {
+        const lowerLlm = llmTitle.toLowerCase();
+        // Check if they share a chapter number or key words
+        const chapterNum = lowerResult.match(/chapter\s+(\d+)/)?.[1];
+        if (chapterNum && lowerLlm.includes(`chapter ${chapterNum}`)) {
+          result.title = llmTitle; // Use the cleaner LLM title
+          break;
+        }
+      }
+    }
   }
 
   return results;
