@@ -100,19 +100,36 @@ export async function POST(
 
     console.log(`[TTS] Audio received, mimeType: ${audioData.mimeType}, data length: ${audioData.data.length}`);
 
-    const audioBuffer = Buffer.from(audioData.data, "base64");
-    const mimeType = audioData.mimeType ?? "audio/mp3";
-    // Gemini TTS returns audio/wav or audio/L16 — normalize to wav
-    const isWav = mimeType.includes("wav") || mimeType.includes("l16") || mimeType.includes("pcm") || mimeType.includes("L16");
-    const ext = isWav ? "wav" : "mp3";
-    const audioPath = `${user.id}/${id}/${chId}.${ext}`;
+    let audioBuffer = Buffer.from(audioData.data, "base64");
+    const rawMimeType = audioData.mimeType ?? "audio/mp3";
+
+    // Gemini TTS returns raw PCM (audio/L16;codec=pcm;rate=24000)
+    // Browsers can't play raw PCM, so wrap it in a WAV container
+    let uploadMimeType = rawMimeType;
+    if (rawMimeType.includes("L16") || rawMimeType.includes("l16") || rawMimeType.includes("pcm")) {
+      // Parse sample rate from mimeType (e.g. "audio/L16;codec=pcm;rate=24000")
+      const rateMatch = rawMimeType.match(/rate=(\d+)/);
+      const sampleRate = rateMatch?.[1] ? parseInt(rateMatch[1]) : 24000;
+      audioBuffer = Buffer.from(wrapPcmInWav(audioBuffer, sampleRate));
+      uploadMimeType = "audio/wav";
+      console.log(`[TTS] Converted raw PCM to WAV (${sampleRate}Hz), size: ${audioBuffer.length}`);
+    }
+
+    const audioPath = `${user.id}/${id}/${chId}.wav`;
+
+    // Ensure audio-cache bucket exists
+    const { data: buckets } = await adminSupabase.storage.listBuckets();
+    if (!buckets?.find(b => b.name === "audio-cache")) {
+      console.log("[TTS] Creating audio-cache bucket");
+      await adminSupabase.storage.createBucket("audio-cache", { public: true });
+    }
 
     // Upload audio to storage
-    console.log(`[TTS] Uploading ${audioBuffer.length} bytes to ${audioPath} as ${mimeType}`);
+    console.log(`[TTS] Uploading ${audioBuffer.length} bytes to ${audioPath}`);
     const { error: storageError } = await adminSupabase.storage
       .from("audio-cache")
       .upload(audioPath, audioBuffer, {
-        contentType: mimeType,
+        contentType: uploadMimeType,
         upsert: true,
       });
 
@@ -162,4 +179,40 @@ export async function POST(
 
     return NextResponse.json({ error: message }, { status });
   }
+}
+
+/**
+ * Wrap raw PCM (16-bit signed, mono) data in a WAV container
+ * so browsers can play it.
+ */
+function wrapPcmInWav(pcmData: Buffer, sampleRate: number): Buffer {
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+  const blockAlign = numChannels * (bitsPerSample / 8);
+  const dataSize = pcmData.length;
+  const headerSize = 44;
+
+  const header = Buffer.alloc(headerSize);
+
+  // RIFF header
+  header.write("RIFF", 0);
+  header.writeUInt32LE(dataSize + headerSize - 8, 4);
+  header.write("WAVE", 8);
+
+  // fmt chunk
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16); // chunk size
+  header.writeUInt16LE(1, 20); // PCM format
+  header.writeUInt16LE(numChannels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+
+  // data chunk
+  header.write("data", 36);
+  header.writeUInt32LE(dataSize, 40);
+
+  return Buffer.concat([header, pcmData]);
 }
