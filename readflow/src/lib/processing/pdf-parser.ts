@@ -97,26 +97,26 @@ ${sampleText}`,
       return fallbackChapterSplit(fullText);
     }
 
-    // Find each section title in order, enforcing monotonically increasing positions
-    // so we skip TOC entries and match actual chapter headings in the body
-    const foundSections: { title: string; startIdx: number }[] = [];
-    let searchFrom = 0;
+    // Search for section titles with TOC-cluster detection.
+    // Pass 1: find first occurrence of each title (monotonically increasing).
+    // If results look like a TOC cluster (all bunched together, bulk of text after),
+    // do Pass 2: re-search starting after the cluster to find body headings.
+    const foundSections = findSectionPositions(fullText, sectionTitles, 0);
 
-    for (let i = 0; i < sectionTitles.length; i++) {
-      const title = sectionTitles[i]!;
-      const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-      const titleRegex = new RegExp(escapedTitle, "i");
-
-      // Search only in text after the previous match to skip TOC occurrences
-      const searchSlice = fullText.substring(searchFrom);
-      const match = searchSlice.match(titleRegex);
-
-      if (!match || match.index === undefined) continue;
-
-      const startIdx = searchFrom + match.index;
-      searchFrom = startIdx + match[0].length;
-
-      foundSections.push({ title, startIdx });
+    // Detect TOC cluster: if we found 3+ titles and the last match position
+    // is in the first 15% of the text, all matches are likely in the TOC
+    if (foundSections.length >= 3) {
+      const lastMatchEnd = foundSections[foundSections.length - 1]!.startIdx;
+      const textAfterLastMatch = fullText.length - lastMatchEnd;
+      if (textAfterLastMatch > fullText.length * 0.5) {
+        // Likely a TOC cluster — re-search starting after the cluster
+        const bodySearchStart = lastMatchEnd + 1;
+        const bodyMatches = findSectionPositions(fullText, sectionTitles, bodySearchStart);
+        if (bodyMatches.length >= 2) {
+          foundSections.length = 0;
+          foundSections.push(...bodyMatches);
+        }
+      }
     }
 
     // Now split text between consecutive found positions
@@ -164,6 +164,36 @@ ${sampleText}`,
     console.error("[Chapter Detection] LLM error, falling back:", error);
     return fallbackChapterSplit(fullText);
   }
+}
+
+/**
+ * Find section title positions in fullText starting from a given offset.
+ * Uses monotonically increasing positions so each title is found after the previous.
+ */
+function findSectionPositions(
+  fullText: string,
+  sectionTitles: string[],
+  startFrom: number
+): { title: string; startIdx: number }[] {
+  const results: { title: string; startIdx: number }[] = [];
+  let searchFrom = startFrom;
+
+  for (const title of sectionTitles) {
+    const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+    const titleRegex = new RegExp(escapedTitle, "i");
+
+    const searchSlice = fullText.substring(searchFrom);
+    const match = searchSlice.match(titleRegex);
+
+    if (!match || match.index === undefined) continue;
+
+    const startIdx = searchFrom + match.index;
+    searchFrom = startIdx + match[0].length;
+
+    results.push({ title, startIdx });
+  }
+
+  return results;
 }
 
 /**
