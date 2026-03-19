@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { Howl } from "howler";
 import { useReaderStore } from "@/stores/readerStore";
 import { findWordIndexAtTime, type WordTimestamp } from "@/lib/utils/audio-utils";
@@ -18,6 +18,7 @@ export function useAudioPlayer({
 }: UseAudioPlayerOptions) {
   const howlRef = useRef<Howl | null>(null);
   const rafRef = useRef<number>(0);
+  const [loadedState, setLoadedState] = useState(false);
   const {
     isPlaying,
     speed,
@@ -31,10 +32,13 @@ export function useAudioPlayer({
   useEffect(() => {
     if (!audioUrl) return;
 
+    setLoadedState(false);
+
     const howl = new Howl({
       src: [audioUrl],
       html5: true,
       preload: true,
+      onload: () => setLoadedState(true),
       onend: () => {
         pause();
         onEnded?.();
@@ -105,12 +109,10 @@ export function useAudioPlayer({
     return (howlRef.current?.duration() ?? 0) * 1000;
   }, []);
 
-  const isLoaded = !!howlRef.current && howlRef.current.state() === "loaded";
-
   return {
     seekTo,
     getDuration,
-    isLoaded,
-    isLoading: !!audioUrl && !isLoaded,
+    isLoaded: loadedState,
+    isLoading: !!audioUrl && !loadedState,
   };
 }

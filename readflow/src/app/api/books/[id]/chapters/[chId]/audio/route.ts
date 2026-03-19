@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { ai, MODEL_TTS } from "@/lib/gemini";
+import { ai, MODEL_TTS, MODEL_LIVE_TTS } from "@/lib/gemini";
+import { Modality } from "@google/genai";
 
 // Map our voice names to Gemini prebuilt voices
 const VOICE_MAP: Record<string, string> = {
@@ -70,50 +71,19 @@ export async function POST(
     const userVoice = profile?.preferred_voice ?? "alloy";
     const geminiVoice = VOICE_MAP[userVoice] ?? "Kore";
 
-    // Generate TTS audio via Gemini
-    const textForTts = chapter.raw_text.substring(0, 5000);
-    console.log(`[TTS] Generating audio for chapter ${chId}, text length: ${textForTts.length}`);
+    // Generate TTS audio via Gemini Live API (handles full chapter text)
+    const fullText = chapter.raw_text;
+    console.log(`[TTS] Generating audio for chapter ${chId}, full text length: ${fullText.length}`);
 
-    const response = await ai.models.generateContent({
-      model: MODEL_TTS,
-      contents: textForTts,
-      config: {
-        responseModalities: ["AUDIO"],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: {
-              voiceName: geminiVoice,
-            },
-          },
-        },
-      },
-    });
-
-    // Extract audio data from response
-    const part = response.candidates?.[0]?.content?.parts?.[0];
-    const audioData = part?.inlineData;
-
-    if (!audioData?.data) {
-      console.error("[TTS] No audio data in response. Parts:", JSON.stringify(response.candidates?.[0]?.content?.parts?.map(p => ({ mimeType: p.inlineData?.mimeType, hasData: !!p.inlineData?.data, keys: Object.keys(p) }))));
-      throw new Error("No audio data in Gemini response");
+    let audioBuffer: Buffer;
+    try {
+      audioBuffer = await generateAudioViaLiveApi(fullText, geminiVoice);
+    } catch (liveError) {
+      console.warn("[TTS] Live API failed, falling back to batch chunking:", liveError);
+      audioBuffer = await generateAudioViaBatchChunking(fullText, geminiVoice);
     }
 
-    console.log(`[TTS] Audio received, mimeType: ${audioData.mimeType}, data length: ${audioData.data.length}`);
-
-    let audioBuffer = Buffer.from(audioData.data, "base64");
-    const rawMimeType = audioData.mimeType ?? "audio/mp3";
-
-    // Gemini TTS returns raw PCM (audio/L16;codec=pcm;rate=24000)
-    // Browsers can't play raw PCM, so wrap it in a WAV container
-    let uploadMimeType = rawMimeType;
-    if (rawMimeType.includes("L16") || rawMimeType.includes("l16") || rawMimeType.includes("pcm")) {
-      // Parse sample rate from mimeType (e.g. "audio/L16;codec=pcm;rate=24000")
-      const rateMatch = rawMimeType.match(/rate=(\d+)/);
-      const sampleRate = rateMatch?.[1] ? parseInt(rateMatch[1]) : 24000;
-      audioBuffer = Buffer.from(wrapPcmInWav(audioBuffer, sampleRate));
-      uploadMimeType = "audio/wav";
-      console.log(`[TTS] Converted raw PCM to WAV (${sampleRate}Hz), size: ${audioBuffer.length}`);
-    }
+    const uploadMimeType = "audio/wav";
 
     const audioPath = `${user.id}/${id}/${chId}.wav`;
 
@@ -179,6 +149,189 @@ export async function POST(
 
     return NextResponse.json({ error: message }, { status });
   }
+}
+
+/**
+ * Split text into chunks at sentence boundaries, never exceeding maxChars.
+ */
+function splitTextIntoChunks(text: string, maxChars = 4000): string[] {
+  if (text.length <= maxChars) return [text];
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= maxChars) {
+      chunks.push(remaining);
+      break;
+    }
+
+    // Find the last sentence boundary within maxChars
+    const slice = remaining.substring(0, maxChars);
+    const sentenceEnd = Math.max(
+      slice.lastIndexOf(". "),
+      slice.lastIndexOf("? "),
+      slice.lastIndexOf("! "),
+      slice.lastIndexOf(".\n"),
+      slice.lastIndexOf("?\n"),
+      slice.lastIndexOf("!\n"),
+    );
+
+    let splitAt: number;
+    if (sentenceEnd > maxChars * 0.3) {
+      splitAt = sentenceEnd + 1; // Include the punctuation
+    } else {
+      // No good sentence boundary — split at last space
+      const lastSpace = slice.lastIndexOf(" ");
+      splitAt = lastSpace > maxChars * 0.3 ? lastSpace : maxChars;
+    }
+
+    chunks.push(remaining.substring(0, splitAt).trim());
+    remaining = remaining.substring(splitAt).trim();
+  }
+
+  return chunks;
+}
+
+/**
+ * Generate audio via Gemini Live API (streaming).
+ * Sends text in chunks via a live session, collects PCM, wraps in WAV.
+ */
+async function generateAudioViaLiveApi(text: string, voiceName: string): Promise<Buffer> {
+  const chunks = splitTextIntoChunks(text, 4000);
+  console.log(`[TTS Live] ${chunks.length} chunks, voice: ${voiceName}`);
+
+  const pcmBuffers: Buffer[] = [];
+  let sampleRate = 24000;
+  let done = false;
+  let resolveCompletion: (() => void) | null = null;
+  let rejectCompletion: ((err: Error) => void) | null = null;
+
+  const session = await ai.live.connect({
+    model: MODEL_LIVE_TTS,
+    config: {
+      responseModalities: [Modality.AUDIO],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName,
+          },
+        },
+      },
+    },
+    callbacks: {
+      onmessage: (message) => {
+        const serverContent = message.serverContent;
+        if (serverContent?.modelTurn?.parts) {
+          for (const part of serverContent.modelTurn.parts) {
+            if (part.inlineData?.data) {
+              pcmBuffers.push(Buffer.from(part.inlineData.data, "base64"));
+              const mime = part.inlineData.mimeType ?? "";
+              const rateMatch = mime.match(/rate=(\d+)/);
+              if (rateMatch?.[1]) {
+                sampleRate = parseInt(rateMatch[1]);
+              }
+            }
+          }
+        }
+        if (serverContent?.turnComplete) {
+          done = true;
+          resolveCompletion?.();
+        }
+      },
+      onerror: (error) => {
+        console.error("[TTS Live] Stream error:", error);
+        rejectCompletion?.(new Error("Live TTS stream error"));
+      },
+    },
+  });
+
+  try {
+    for (let i = 0; i < chunks.length; i++) {
+      const isLast = i === chunks.length - 1;
+      console.log(`[TTS Live] Sending chunk ${i + 1}/${chunks.length} (${chunks[i]!.length} chars)`);
+
+      session.sendClientContent({
+        turns: [
+          {
+            role: "user",
+            parts: [{ text: chunks[i]! }],
+          },
+        ],
+        turnComplete: isLast,
+      });
+    }
+
+    // Wait for turnComplete from the server
+    if (!done) {
+      await new Promise<void>((resolve, reject) => {
+        resolveCompletion = resolve;
+        rejectCompletion = reject;
+        setTimeout(() => reject(new Error("Live TTS session timed out after 120s")), 120_000);
+      });
+    }
+  } finally {
+    session.close();
+  }
+
+  if (pcmBuffers.length === 0) {
+    throw new Error("No audio data received from Live API");
+  }
+
+  const combinedPcm = Buffer.concat(pcmBuffers);
+  console.log(`[TTS Live] Total PCM: ${combinedPcm.length} bytes, rate: ${sampleRate}`);
+  return Buffer.from(wrapPcmInWav(combinedPcm, sampleRate));
+}
+
+/**
+ * Fallback: generate audio via batch API with chunking.
+ * Calls generateContent for each chunk and concatenates PCM.
+ */
+async function generateAudioViaBatchChunking(text: string, voiceName: string): Promise<Buffer> {
+  const chunks = splitTextIntoChunks(text, 4000);
+  console.log(`[TTS Batch] ${chunks.length} chunks, voice: ${voiceName}`);
+
+  const pcmBuffers: Buffer[] = [];
+  let sampleRate = 24000;
+
+  for (let i = 0; i < chunks.length; i++) {
+    console.log(`[TTS Batch] Generating chunk ${i + 1}/${chunks.length} (${chunks[i]!.length} chars)`);
+
+    const response = await ai.models.generateContent({
+      model: MODEL_TTS,
+      contents: chunks[i]!,
+      config: {
+        responseModalities: ["AUDIO"],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: {
+              voiceName,
+            },
+          },
+        },
+      },
+    });
+
+    const part = response.candidates?.[0]?.content?.parts?.[0];
+    const audioData = part?.inlineData;
+
+    if (!audioData?.data) {
+      console.error(`[TTS Batch] No audio data for chunk ${i + 1}`);
+      throw new Error(`No audio data for chunk ${i + 1}`);
+    }
+
+    const rawMimeType = audioData.mimeType ?? "";
+    const rateMatch = rawMimeType.match(/rate=(\d+)/);
+    if (rateMatch?.[1]) {
+      sampleRate = parseInt(rateMatch[1]);
+    }
+
+    pcmBuffers.push(Buffer.from(audioData.data, "base64"));
+  }
+
+  const combinedPcm = Buffer.concat(pcmBuffers);
+  console.log(`[TTS Batch] Total PCM: ${combinedPcm.length} bytes, rate: ${sampleRate}`);
+  return Buffer.from(wrapPcmInWav(combinedPcm, sampleRate));
 }
 
 /**

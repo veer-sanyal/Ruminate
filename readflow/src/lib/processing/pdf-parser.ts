@@ -99,7 +99,9 @@ ${sampleText}`,
     }
 
     // Find section positions using fuzzy matching with TOC-skip logic
-    const foundSections = findSectionsWithTocSkip(fullText, sectionTitles);
+    const tocSkipResult = findSectionsWithTocSkip(fullText, sectionTitles);
+    const foundSections = tocSkipResult.sections;
+    const tocRegion = tocSkipResult.tocRegion;
     console.log("[Chapter Detection] Found sections:", foundSections.map(s => `${s.title} @${s.startIdx}`));
 
     // If fuzzy matching found very few sections, try pattern-based detection
@@ -143,11 +145,26 @@ ${sampleText}`,
             text: prefaceText,
             sortOrder: 0,
           });
-          // Re-index sort orders
-          chapters.forEach((ch, idx) => { ch.sortOrder = idx; });
         }
       }
     }
+
+    // If a TOC region was detected, insert it as a chapter between Front Matter and body
+    if (tocRegion && chapters.length > 0) {
+      const tocText = fullText.substring(tocRegion.startIdx, tocRegion.endIdx).trim();
+      if (tocText.length > 50) {
+        // Insert after Front Matter if it exists, otherwise at start
+        const insertIdx = chapters[0]?.title === "Front Matter" ? 1 : 0;
+        chapters.splice(insertIdx, 0, {
+          title: "Table of Contents",
+          text: tocText,
+          sortOrder: insertIdx,
+        });
+      }
+    }
+
+    // Re-index sort orders
+    chapters.forEach((ch, idx) => { ch.sortOrder = idx; });
 
     if (chapters.length === 0) {
       return fallbackChapterSplit(fullText);
@@ -161,31 +178,41 @@ ${sampleText}`,
   }
 }
 
+interface TocSkipResult {
+  sections: { title: string; startIdx: number }[];
+  tocRegion: { startIdx: number; endIdx: number } | null;
+}
+
 /**
  * Find section positions with TOC-cluster detection.
  * Pass 1: find first occurrences. If they cluster (TOC), Pass 2: re-search after cluster.
  * Uses fuzzy matching: tries full title, then partial matches.
+ * Returns both the found sections and any detected TOC region boundaries.
  */
 function findSectionsWithTocSkip(
   fullText: string,
   sectionTitles: string[]
-): { title: string; startIdx: number }[] {
+): TocSkipResult {
   const pass1 = findSectionPositionsFuzzy(fullText, sectionTitles, 0);
 
   // Detect TOC cluster: all matches bunched in first portion, bulk of text after
   if (pass1.length >= 2) {
+    const firstMatchStart = pass1[0]!.startIdx;
     const lastMatchEnd = pass1[pass1.length - 1]!.startIdx;
     const textAfterLastMatch = fullText.length - lastMatchEnd;
     if (textAfterLastMatch > fullText.length * 0.5) {
       console.log("[Chapter Detection] TOC cluster detected, re-searching body from offset", lastMatchEnd);
       const pass2 = findSectionPositionsFuzzy(fullText, sectionTitles, lastMatchEnd + 1);
       if (pass2.length >= 2) {
-        return pass2;
+        return {
+          sections: pass2,
+          tocRegion: { startIdx: firstMatchStart, endIdx: lastMatchEnd + 200 },
+        };
       }
     }
   }
 
-  return pass1;
+  return { sections: pass1, tocRegion: null };
 }
 
 /**
@@ -255,6 +282,23 @@ function fuzzyFindTitle(fullText: string, title: string, searchFrom: number): nu
       const suffixMatch = searchSlice.match(new RegExp(esc(suffix), "i"));
       if (suffixMatch?.index !== undefined) {
         return searchFrom + suffixMatch.index;
+      }
+    }
+  }
+
+  // Strategy 4: Known named sections — match as standalone line headings
+  // Catches "INTRODUCTION", "PREFACE", etc. that appear as all-caps headings on their own line
+  const namedSections = [
+    "introduction", "preface", "foreword", "prologue", "epilogue",
+    "conclusion", "afterword", "acknowledgments", "acknowledgements",
+    "about the author", "appendix", "author's note",
+  ];
+  const titleLower = title.toLowerCase().trim();
+  for (const section of namedSections) {
+    if (titleLower.includes(section)) {
+      const headingMatch = searchSlice.match(new RegExp(`^\\s*${section}\\s*$`, "im"));
+      if (headingMatch?.index !== undefined) {
+        return searchFrom + headingMatch.index;
       }
     }
   }

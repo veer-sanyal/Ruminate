@@ -44,15 +44,6 @@ export default function AudioLoadingState({
           padding: 40px 20px;
           text-align: center;
         }
-        @keyframes spin {
-          to {
-            transform: rotate(360deg);
-          }
-        }
-        .audio-loading :global(.spinner) {
-          animation: spin 1s linear infinite;
-          color: var(--accent);
-        }
         .loading-text {
           font-size: 16px;
           font-weight: 500;
@@ -65,6 +56,17 @@ export default function AudioLoadingState({
         .error-text {
           font-size: 15px;
           color: var(--error);
+        }
+      `}</style>
+      <style jsx global>{`
+        @keyframes spin {
+          to {
+            transform: rotate(360deg);
+          }
+        }
+        .spinner {
+          animation: spin 1s linear infinite;
+          color: var(--accent);
         }
       `}</style>
     </>

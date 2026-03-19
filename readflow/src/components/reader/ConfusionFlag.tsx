@@ -31,7 +31,7 @@ export default function ConfusionFlag() {
       <style jsx>{`
         .confusion-btn {
           position: fixed;
-          bottom: 100px;
+          bottom: 150px;
           right: 20px;
           z-index: 40;
           width: 48px;
