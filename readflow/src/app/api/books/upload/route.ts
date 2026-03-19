@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { processBook } from "@/lib/processing/process-book";
 
-// Increase body size limit for file uploads (default is 4.5MB on Vercel)
+// Allow longer execution for file upload + processing
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
@@ -88,23 +89,12 @@ export async function POST(request: Request) {
       );
     }
 
-    // Trigger processing pipeline
-    const origin = new URL(request.url).origin;
+    // Process the book directly (extract chapters, update metadata)
     try {
-      const processRes = await fetch(`${origin}/api/internal/process-book`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ book_id: bookId }),
-      });
-      if (!processRes.ok) {
-        console.error(
-          "Process-book failed:",
-          processRes.status,
-          await processRes.text()
-        );
-      }
+      await processBook(bookId);
     } catch (processErr) {
-      console.error("Process-book fetch error:", processErr);
+      // processBook already sets the book status to "error" in DB
+      console.error("Book processing failed:", processErr);
     }
 
     return NextResponse.json({ book_id: bookId });
