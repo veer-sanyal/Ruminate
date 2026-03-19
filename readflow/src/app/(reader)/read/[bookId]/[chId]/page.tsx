@@ -173,15 +173,15 @@ export default function ReaderPage() {
         <div className="reader-content">
           {generatingAudio || audioLoading ? (
             <AudioLoadingState
-              status={audioError ? "error" : "generating"}
-              onRetry={
-                audioError
-                  ? () => {
-                      setAudioError(false);
-                      setRetryCount((c) => c + 1);
-                    }
-                  : undefined
-              }
+              status="generating"
+            />
+          ) : audioError ? (
+            <AudioLoadingState
+              status="error"
+              onRetry={() => {
+                setAudioError(false);
+                setRetryCount((c) => c + 1);
+              }}
             />
           ) : null}
 

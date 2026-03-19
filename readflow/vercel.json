@@ -3,6 +3,10 @@
     "src/app/api/books/upload/route.ts": {
       "maxDuration": 60,
       "memory": 1024
+    },
+    "src/app/api/books/[id]/chapters/[chId]/audio/route.ts": {
+      "maxDuration": 120,
+      "memory": 1024
     }
   }
 }
