@@ -94,8 +94,11 @@ export async function POST(
       })
     );
 
-    // Concatenate MP3 buffers (MP3 frames are independently decodable)
-    const audioBuffer = Buffer.concat(mp3Buffers);
+    // Concatenate MP3 buffers — strip ID3/header from chunks after the first
+    // so Whisper and other decoders treat it as a single continuous stream
+    const audioBuffer = Buffer.concat(
+      mp3Buffers.map((buf, i) => (i === 0 ? buf : stripMp3Header(buf)))
+    );
     console.log(`[TTS] Total audio: ${audioBuffer.length} bytes`);
 
     // Upload audio to Supabase Storage
@@ -159,6 +162,35 @@ export async function POST(
 
     return NextResponse.json({ error: message }, { status });
   }
+}
+
+/**
+ * Strip ID3v2 tags and find the first MPEG sync frame in an MP3 buffer.
+ * Used when concatenating multiple MP3 files into one continuous stream.
+ */
+function stripMp3Header(buf: Buffer): Buffer {
+  let offset = 0;
+
+  // Skip ID3v2 tag if present ("ID3" magic bytes)
+  if (buf.length > 10 && buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33) {
+    // ID3v2 size is stored in 4 bytes (synchsafe integers)
+    const size =
+      ((buf[6]! & 0x7f) << 21) |
+      ((buf[7]! & 0x7f) << 14) |
+      ((buf[8]! & 0x7f) << 7) |
+      (buf[9]! & 0x7f);
+    offset = 10 + size;
+  }
+
+  // Find first MPEG audio frame sync word (0xFF followed by 0xE0+)
+  while (offset < buf.length - 1) {
+    if (buf[offset] === 0xff && (buf[offset + 1]! & 0xe0) === 0xe0) {
+      break;
+    }
+    offset++;
+  }
+
+  return buf.subarray(offset);
 }
 
 /**

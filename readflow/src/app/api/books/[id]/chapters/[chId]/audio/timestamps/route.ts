@@ -89,11 +89,38 @@ export async function POST(
       timestamp_granularities: ["word"],
     });
     const whisperWords = (transcription as { words?: { word: string; start: number; end: number }[] }).words ?? [];
+    const whisperDuration = (transcription as { duration?: number }).duration ?? 0;
+    console.log(`[Timestamps] Whisper returned ${whisperWords.length} words, duration: ${whisperDuration}s`);
 
-    console.log(`[Timestamps] Whisper returned ${whisperWords.length} words`);
+    // Estimate total audio duration from file size (~96-128kbps typical for TTS MP3)
+    const estimatedDurationSec = audioBytes / 13000; // ~104kbps average
+    const whisperCoveragePct = whisperDuration > 0 && estimatedDurationSec > 0
+      ? (whisperDuration / estimatedDurationSec) * 100
+      : 100;
+    console.log(`[Timestamps] Coverage: ${whisperCoveragePct.toFixed(1)}% (whisper ${whisperDuration}s / est ${estimatedDurationSec.toFixed(0)}s)`);
 
-    const timestamps: WordTimestamp[] = alignTimestamps(chapter.raw_text, whisperWords);
-    console.log(`[Timestamps] Aligned ${timestamps.length} word timestamps`);
+    let timestamps: WordTimestamp[];
+
+    if (whisperCoveragePct < 50 || whisperWords.length < 10) {
+      // Whisper failed to decode most of the audio (concatenated MP3 issue)
+      // Fall back to character-weighted linear timestamps
+      console.log("[Timestamps] Low coverage — using character-weighted linear estimation");
+      const originalTokens = chapter.raw_text.split(/\s+/).filter((w: string) => w.length > 0);
+      const totalChars = originalTokens.reduce((sum: number, w: string) => sum + w.length, 0);
+      // Use Whisper's duration if available, otherwise estimate
+      const totalDurationMs = (whisperDuration > 30 ? whisperDuration : estimatedDurationSec) * 1000;
+      let charsSoFar = 0;
+      timestamps = originalTokens.map((word: string) => {
+        const start = Math.round((charsSoFar / totalChars) * totalDurationMs);
+        charsSoFar += word.length;
+        const end = Math.round((charsSoFar / totalChars) * totalDurationMs);
+        return { word, start, end };
+      });
+    } else {
+      timestamps = alignTimestamps(chapter.raw_text, whisperWords);
+    }
+
+    console.log(`[Timestamps] Generated ${timestamps.length} word timestamps`);
 
     // Update chapter with timestamps
     const { error: updateError } = await adminSupabase
