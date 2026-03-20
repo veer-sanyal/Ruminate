@@ -90,24 +90,21 @@ export async function POST(
     });
     const whisperWords = (transcription as { words?: { word: string; start: number; end: number }[] }).words ?? [];
     const whisperDuration = (transcription as { duration?: number }).duration ?? 0;
-    console.log(`[Timestamps] Whisper returned ${whisperWords.length} words, duration: ${whisperDuration}s`);
-
-    // Estimate total audio duration from file size (~96-128kbps typical for TTS MP3)
+    // Use actual last word timestamp as true coverage (duration field can be misleading for concatenated MP3s)
+    const lastWordTimeSec = whisperWords.length > 0 ? whisperWords[whisperWords.length - 1]!.end : 0;
     const estimatedDurationSec = audioBytes / 13000; // ~104kbps average
-    const whisperCoveragePct = whisperDuration > 0 && estimatedDurationSec > 0
-      ? (whisperDuration / estimatedDurationSec) * 100
-      : 100;
-    console.log(`[Timestamps] Coverage: ${whisperCoveragePct.toFixed(1)}% (whisper ${whisperDuration}s / est ${estimatedDurationSec.toFixed(0)}s)`);
+    console.log(`[Timestamps] Whisper: ${whisperWords.length} words, last word at ${lastWordTimeSec}s, reported duration ${whisperDuration}s, est total ${estimatedDurationSec.toFixed(0)}s`);
 
     let timestamps: WordTimestamp[];
+    const actualCoverage = estimatedDurationSec > 0 ? (lastWordTimeSec / estimatedDurationSec) : 1;
 
-    if (whisperCoveragePct < 50 || whisperWords.length < 10) {
+    if (actualCoverage < 0.5 || whisperWords.length < 10) {
       // Whisper failed to decode most of the audio (concatenated MP3 issue)
       // Fall back to character-weighted linear timestamps
-      console.log("[Timestamps] Low coverage — using character-weighted linear estimation");
+      console.log(`[Timestamps] Low coverage (${(actualCoverage * 100).toFixed(1)}%) — using character-weighted linear estimation`);
       const originalTokens = chapter.raw_text.split(/\s+/).filter((w: string) => w.length > 0);
       const totalChars = originalTokens.reduce((sum: number, w: string) => sum + w.length, 0);
-      // Use Whisper's duration if available, otherwise estimate
+      // Use Whisper's reported duration (from file metadata) as total
       const totalDurationMs = (whisperDuration > 30 ? whisperDuration : estimatedDurationSec) * 1000;
       let charsSoFar = 0;
       timestamps = originalTokens.map((word: string) => {
