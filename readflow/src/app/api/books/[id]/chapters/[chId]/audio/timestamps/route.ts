@@ -130,7 +130,17 @@ export async function POST(
       throw new Error(`DB update error: ${updateError.message}`);
     }
 
-    return NextResponse.json({ audio_timestamps: timestamps });
+    return NextResponse.json({
+      audio_timestamps: timestamps,
+      _debug: {
+        method: actualCoverage < 0.5 ? "linear" : "whisper",
+        coverage: actualCoverage,
+        whisperWords: whisperWords.length,
+        lastWordSec: lastWordTimeSec,
+        estimatedDurSec: estimatedDurationSec,
+        lastTs: timestamps[timestamps.length - 1],
+      },
+    });
   } catch (error) {
     console.error("[Timestamps] Error:", error instanceof Error ? error.message : error);
     return NextResponse.json(
