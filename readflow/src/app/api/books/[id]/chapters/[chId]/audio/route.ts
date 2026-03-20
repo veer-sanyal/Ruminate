@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { openai } from "@/lib/openai";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 const VALID_VOICES = ["alloy", "ash", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"] as const;
 type Voice = typeof VALID_VOICES[number];
@@ -48,8 +48,10 @@ export async function POST(
     return NextResponse.json({ error: "Chapter not found" }, { status: 404 });
   }
 
-  // If audio already exists, return it
-  if (chapter.audio_url) {
+  // If audio already exists, return it (unless force regeneration)
+  const { searchParams } = new URL(request.url);
+  const force = searchParams.get("force") === "1";
+  if (chapter.audio_url && !force) {
     return NextResponse.json({ audio_url: chapter.audio_url });
   }
 
@@ -129,10 +131,10 @@ export async function POST(
       .from("audio-cache")
       .getPublicUrl(audioPath);
 
-    // Update chapter record with audio URL (timestamps generated separately)
+    // Update chapter record with audio URL; clear old timestamps since audio changed
     const { error: updateError } = await adminSupabase
       .from("chapters")
-      .update({ audio_url: urlData.publicUrl })
+      .update({ audio_url: urlData.publicUrl, audio_timestamps: null })
       .eq("id", chId);
 
     if (updateError) {
