@@ -5,7 +5,7 @@ import { openai } from "@/lib/openai";
 import { alignTimestamps } from "@/lib/processing/timestamp-align";
 import type { WordTimestamp } from "@/lib/utils/audio-utils";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 export async function POST(
   request: Request,
@@ -64,18 +64,69 @@ export async function POST(
       throw new Error(`Failed to download audio: ${audioResponse.status}`);
     }
     const audioArrayBuffer = await audioResponse.arrayBuffer();
-    const audioFile = new File([audioArrayBuffer], "chapter.mp3", { type: "audio/mpeg" });
+    const audioBytes = audioArrayBuffer.byteLength;
+    console.log(`[Timestamps] Audio size: ${audioBytes} bytes`);
 
-    // Run Whisper for word-level timestamps
-    console.log("[Timestamps] Running Whisper for word timestamps...");
-    const transcription = await openai.audio.transcriptions.create({
-      file: audioFile,
-      model: "whisper-1",
-      response_format: "verbose_json",
-      timestamp_granularities: ["word"],
-    });
+    const WHISPER_LIMIT = 24 * 1024 * 1024; // 24MB to stay safely under 25MB limit
+    let whisperWords: { word: string; start: number; end: number }[] = [];
 
-    const whisperWords = (transcription as { words?: { word: string; start: number; end: number }[] }).words ?? [];
+    if (audioBytes <= WHISPER_LIMIT) {
+      // Small enough — single Whisper call
+      const audioFile = new File([audioArrayBuffer], "chapter.mp3", { type: "audio/mpeg" });
+      console.log("[Timestamps] Running Whisper for word timestamps...");
+      const transcription = await openai.audio.transcriptions.create({
+        file: audioFile,
+        model: "whisper-1",
+        response_format: "verbose_json",
+        timestamp_granularities: ["word"],
+      });
+      whisperWords = (transcription as { words?: { word: string; start: number; end: number }[] }).words ?? [];
+    } else {
+      // Split MP3 into chunks under the limit and transcribe each
+      // MP3 frames are independently decodable, so byte-level splitting works
+      const numChunks = Math.ceil(audioBytes / WHISPER_LIMIT);
+      const chunkSize = Math.ceil(audioBytes / numChunks);
+      console.log(`[Timestamps] Audio exceeds limit, splitting into ${numChunks} chunks of ~${chunkSize} bytes`);
+
+      // We need to estimate duration per chunk for timestamp offsetting
+      // First, get total duration from a quick Whisper call on a tiny slice
+      // Instead, we process sequentially and use Whisper's returned timestamps + offset
+      const audioBuffer = Buffer.from(audioArrayBuffer);
+
+      for (let i = 0; i < numChunks; i++) {
+        const start = i * chunkSize;
+        const end = Math.min(start + chunkSize, audioBytes);
+        const chunkBuffer = audioBuffer.subarray(start, end);
+        const chunkFile = new File([chunkBuffer], `chunk_${i}.mp3`, { type: "audio/mpeg" });
+
+        console.log(`[Timestamps] Whisper chunk ${i + 1}/${numChunks} (${chunkBuffer.length} bytes)`);
+        const transcription = await openai.audio.transcriptions.create({
+          file: chunkFile,
+          model: "whisper-1",
+          response_format: "verbose_json",
+          timestamp_granularities: ["word"],
+        });
+
+        const chunkWords = (transcription as { words?: { word: string; start: number; end: number }[] }).words ?? [];
+
+        if (i === 0) {
+          whisperWords = chunkWords;
+        } else {
+          // Offset timestamps: the last word end of previous chunk is our time offset
+          const timeOffset = whisperWords.length > 0
+            ? whisperWords[whisperWords.length - 1]!.end
+            : 0;
+          for (const w of chunkWords) {
+            whisperWords.push({
+              word: w.word,
+              start: w.start + timeOffset,
+              end: w.end + timeOffset,
+            });
+          }
+        }
+      }
+    }
+
     console.log(`[Timestamps] Whisper returned ${whisperWords.length} words`);
 
     const timestamps: WordTimestamp[] = alignTimestamps(chapter.raw_text, whisperWords);
