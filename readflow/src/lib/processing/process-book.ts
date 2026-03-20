@@ -82,7 +82,7 @@ export async function extractBook(bookId: string) {
     }
 
     const updateData: Record<string, unknown> = {
-      processing_status: "ready",
+      processing_status: "distilling",
       total_words: totalWords,
       estimated_listen_mins: estimateListenMins(totalWords),
       estimated_rsvp_mins: estimateRsvpMins(totalWords),
@@ -184,6 +184,12 @@ export async function distillBook(bookId: string) {
     } catch (err) {
       console.warn("[Distill] Book summary generation failed:", err);
     }
+
+    // Mark as ready
+    await supabase
+      .from("books")
+      .update({ processing_status: "ready" })
+      .eq("id", bookId);
   } catch (error) {
     console.error("[Distill] Error distilling book:", error);
   }

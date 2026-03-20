@@ -25,5 +25,11 @@ export function useBooks(opts: UseBooksOptions = {}) {
     queryKey: ["books", opts],
     queryFn: () => fetchBooks(opts),
     staleTime: 5 * 60 * 1000,
+    refetchInterval: (query) => {
+      const hasProcessing = query.state.data?.some(
+        (b) => b.processing_status !== "ready" && b.processing_status !== "error"
+      );
+      return hasProcessing ? 5_000 : false;
+    },
   });
 }
