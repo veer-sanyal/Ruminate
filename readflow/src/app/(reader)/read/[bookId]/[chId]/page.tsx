@@ -79,6 +79,36 @@ export default function ReaderPage() {
     return () => { cancelled = true; };
   }, [chapter?.audio_url, bookId, chId, queryClient, retryCount]);
 
+  // Fetch word timestamps in background once audio is ready
+  useEffect(() => {
+    if (!chapter?.audio_url || chapter.audio_timestamps?.length) return;
+
+    let cancelled = false;
+
+    async function fetchTimestamps() {
+      try {
+        const res = await fetch(
+          `/api/books/${bookId}/chapters/${chId}/audio/timestamps`,
+          { method: "POST" }
+        );
+        if (!res.ok) {
+          console.warn("[Reader] Timestamp generation failed:", res.status);
+          return;
+        }
+        if (!cancelled) {
+          await queryClient.invalidateQueries({
+            queryKey: ["chapter", bookId, chId],
+          });
+        }
+      } catch (err) {
+        console.warn("[Reader] Timestamp fetch error:", err);
+      }
+    }
+
+    fetchTimestamps();
+    return () => { cancelled = true; };
+  }, [chapter?.audio_url, chapter?.audio_timestamps?.length, bookId, chId, queryClient]);
+
   // Audio player
   const { seekTo, getDuration, isLoading: audioLoading } = useAudioPlayer({
     audioUrl: chapter?.audio_url ?? null,
