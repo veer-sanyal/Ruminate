@@ -96,25 +96,28 @@ export async function POST(
     console.log(`[Timestamps] Whisper: ${whisperWords.length} words, last word at ${lastWordTimeSec}s, reported duration ${whisperDuration}s, est total ${estimatedDurationSec.toFixed(0)}s`);
 
     let timestamps: WordTimestamp[];
+    let method: string;
     const actualCoverage = estimatedDurationSec > 0 ? (lastWordTimeSec / estimatedDurationSec) : 1;
+    const estimatedDurationMs = estimatedDurationSec * 1000;
 
     if (actualCoverage < 0.5 || whisperWords.length < 10) {
       // Whisper failed to decode most of the audio (concatenated MP3 issue)
       // Fall back to character-weighted linear timestamps
-      console.log(`[Timestamps] Low coverage (${(actualCoverage * 100).toFixed(1)}%) — using character-weighted linear estimation`);
-      const originalTokens = chapter.raw_text.split(/\s+/).filter((w: string) => w.length > 0);
-      const totalChars = originalTokens.reduce((sum: number, w: string) => sum + w.length, 0);
-      // Use estimated duration from file size (whisperDuration is unreliable for concatenated MP3s)
-      const totalDurationMs = estimatedDurationSec * 1000;
-      let charsSoFar = 0;
-      timestamps = originalTokens.map((word: string) => {
-        const start = Math.round((charsSoFar / totalChars) * totalDurationMs);
-        charsSoFar += word.length;
-        const end = Math.round((charsSoFar / totalChars) * totalDurationMs);
-        return { word, start, end };
-      });
+      console.log(`[Timestamps] Low Whisper coverage (${(actualCoverage * 100).toFixed(1)}%) — using linear estimation`);
+      timestamps = linearTimestamps(chapter.raw_text, estimatedDurationMs);
+      method = "linear";
     } else {
-      timestamps = alignTimestamps(chapter.raw_text, whisperWords);
+      timestamps = alignTimestamps(chapter.raw_text, whisperWords, estimatedDurationMs);
+      method = "whisper";
+
+      // Post-alignment check: if aligned timestamps don't cover the audio, fall back
+      const lastAlignedMs = timestamps.length > 0 ? timestamps[timestamps.length - 1]!.end : 0;
+      const alignedCoverage = estimatedDurationMs > 0 ? (lastAlignedMs / estimatedDurationMs) : 1;
+      if (alignedCoverage < 0.3) {
+        console.log(`[Timestamps] Alignment coverage only ${(alignedCoverage * 100).toFixed(1)}% — falling back to linear`);
+        timestamps = linearTimestamps(chapter.raw_text, estimatedDurationMs);
+        method = "linear-fallback";
+      }
     }
 
     console.log(`[Timestamps] Generated ${timestamps.length} word timestamps`);
@@ -133,12 +136,12 @@ export async function POST(
     return NextResponse.json({
       audio_timestamps: timestamps,
       _debug: {
-        method: actualCoverage < 0.5 ? "linear" : "whisper",
-        coverage: actualCoverage,
+        method,
+        whisperCoverage: actualCoverage,
+        alignedLastMs: timestamps[timestamps.length - 1]?.end,
+        estimatedDurMs: estimatedDurationMs,
         whisperWords: whisperWords.length,
         lastWordSec: lastWordTimeSec,
-        estimatedDurSec: estimatedDurationSec,
-        lastTs: timestamps[timestamps.length - 1],
       },
     });
   } catch (error) {
@@ -148,4 +151,17 @@ export async function POST(
       { status: 500 }
     );
   }
+}
+
+/** Character-weighted linear timestamps as a fallback. */
+function linearTimestamps(rawText: string, totalDurationMs: number): WordTimestamp[] {
+  const tokens = rawText.split(/\s+/).filter((w: string) => w.length > 0);
+  const totalChars = tokens.reduce((sum: number, w: string) => sum + w.length, 0);
+  let charsSoFar = 0;
+  return tokens.map((word: string) => {
+    const start = Math.round((charsSoFar / totalChars) * totalDurationMs);
+    charsSoFar += word.length;
+    const end = Math.round((charsSoFar / totalChars) * totalDurationMs);
+    return { word, start, end };
+  });
 }
