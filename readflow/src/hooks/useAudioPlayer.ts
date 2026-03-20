@@ -18,6 +18,7 @@ export function useAudioPlayer({
 }: UseAudioPlayerOptions) {
   const howlRef = useRef<Howl | null>(null);
   const rafRef = useRef<number>(0);
+  const timestampsRef = useRef<WordTimestamp[] | undefined>(timestamps);
   const [loadedState, setLoadedState] = useState(false);
   const {
     isPlaying,
@@ -27,6 +28,11 @@ export function useAudioPlayer({
     setCurrentWordIndex,
     seek,
   } = useReaderStore();
+
+  // Keep timestamps ref in sync
+  useEffect(() => {
+    timestampsRef.current = timestamps;
+  }, [timestamps]);
 
   // Initialize Howl
   useEffect(() => {
@@ -57,6 +63,23 @@ export function useAudioPlayer({
     };
   }, [audioUrl]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Time update loop — reads timestamps from ref so it always has latest
+  const updateLoop = useCallback(() => {
+    const howl = howlRef.current;
+    if (!howl || !howl.playing()) return;
+
+    const currentMs = (howl.seek() as number) * 1000;
+    seek(currentMs);
+
+    const ts = timestampsRef.current;
+    if (ts && ts.length > 0) {
+      const wordIndex = findWordIndexAtTime(ts, currentMs);
+      setCurrentWordIndex(wordIndex);
+    }
+
+    rafRef.current = requestAnimationFrame(updateLoop);
+  }, [seek, setCurrentWordIndex]);
+
   // Sync play/pause with store
   useEffect(() => {
     const howl = howlRef.current;
@@ -69,28 +92,12 @@ export function useAudioPlayer({
       howl.pause();
       cancelAnimationFrame(rafRef.current);
     }
-  }, [isPlaying]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isPlaying, updateLoop]);
 
   // Sync speed
   useEffect(() => {
     howlRef.current?.rate(speed);
   }, [speed]);
-
-  // Time update loop
-  const updateLoop = useCallback(() => {
-    const howl = howlRef.current;
-    if (!howl || !howl.playing()) return;
-
-    const currentMs = (howl.seek() as number) * 1000;
-    seek(currentMs);
-
-    if (timestamps) {
-      const wordIndex = findWordIndexAtTime(timestamps, currentMs);
-      setCurrentWordIndex(wordIndex);
-    }
-
-    rafRef.current = requestAnimationFrame(updateLoop);
-  }, [timestamps, seek, setCurrentWordIndex]);
 
   // Seek to a specific position
   const seekTo = useCallback((ms: number) => {

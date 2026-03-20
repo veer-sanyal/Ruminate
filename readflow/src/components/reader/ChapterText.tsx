@@ -64,30 +64,36 @@ export default function ChapterText({ text, onTogglePlayPause }: ChapterTextProp
 
       <style jsx>{`
         .chapter-text {
-          font-family: var(--font-reading);
-          font-size: 20px;
-          line-height: 1.7;
+          font-family: var(--font-reader);
+          font-size: 19px;
+          line-height: 1.8;
           color: var(--text-primary);
-          max-width: 680px;
+          max-width: 620px;
           margin: 0 auto;
-          padding: 40px 0;
+          padding: 48px 40px;
           cursor: pointer;
           user-select: none;
-          overflow-y: auto;
+          letter-spacing: 0.01em;
+          word-spacing: 0.05em;
+        }
+        .chapter-text p + p,
+        .chapter-text br + span {
+          margin-top: 1.2em;
         }
         .word {
-          transition: none; /* INSTANT highlight */
+          transition: none;
         }
         .word-active {
-          background: rgba(var(--accent-rgb, 139, 92, 246), 0.2);
+          background: var(--accent-subtle);
+          color: var(--accent-text);
           border-radius: 3px;
-          padding: 1px 0;
+          padding: 2px 1px;
         }
 
         @media (max-width: 640px) {
           .chapter-text {
-            font-size: 18px;
-            padding: 24px 0;
+            font-size: 17px;
+            padding: 32px 24px;
           }
         }
       `}</style>

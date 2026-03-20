@@ -29,7 +29,7 @@ export default function ReaderPage() {
   const queryClient = useQueryClient();
   const { data: chapter, isLoading: chapterLoading } = useChapter(bookId, chId);
   const { data: chapters } = useChapters(bookId);
-  const { togglePlayPause, currentWordIndex, reset, seek: storeSeek } = useReaderStore();
+  const { togglePlayPause, currentWordIndex, reset, seek: storeSeek, playbackPosition } = useReaderStore();
 
   const [showSettings, setShowSettings] = useState(false);
   const [showComplete, setShowComplete] = useState(false);
@@ -191,41 +191,55 @@ export default function ReaderPage() {
     );
   }
 
+  const duration = getDuration();
+  const progressPercent = duration > 0 ? (playbackPosition / duration) * 100 : 0;
+
   return (
     <>
+      {/* Reading progress bar at very top */}
+      <div className="progress-bar-track">
+        <div
+          className="progress-bar-fill"
+          style={{ width: `${Math.min(100, progressPercent)}%` }}
+        />
+      </div>
+
       <div className="reader">
         <ReaderTopBar
           bookId={bookId}
           chapterTitle={chapter.title ?? "Chapter"}
           onSettingsClick={() => setShowSettings(!showSettings)}
+          progressPercent={Math.round(progressPercent)}
         />
 
         <div className="reader-content">
-          {generatingAudio || audioLoading ? (
-            <AudioLoadingState
-              status="generating"
-            />
-          ) : audioError ? (
-            <AudioLoadingState
-              status="error"
-              onRetry={() => {
-                setAudioError(false);
-                setRetryCount((c) => c + 1);
-              }}
-            />
-          ) : null}
+          <div className="page-container">
+            {generatingAudio || audioLoading ? (
+              <AudioLoadingState
+                status="generating"
+              />
+            ) : audioError ? (
+              <AudioLoadingState
+                status="error"
+                onRetry={() => {
+                  setAudioError(false);
+                  setRetryCount((c) => c + 1);
+                }}
+              />
+            ) : null}
 
-          {chapter.raw_text && (
-            <ChapterText
-              text={chapter.raw_text}
-              onTogglePlayPause={togglePlayPause}
-            />
-          )}
+            {chapter.raw_text && (
+              <ChapterText
+                text={chapter.raw_text}
+                onTogglePlayPause={togglePlayPause}
+              />
+            )}
+          </div>
         </div>
 
         {/* Controls */}
         <div className="controls">
-          <ScrubBar duration={getDuration()} onSeek={seekTo} />
+          <ScrubBar duration={duration} onSeek={seekTo} />
           <div className="controls-row">
             <SentenceReplay onReplaySentence={handleReplaySentence} />
             <PlayPauseButton />
@@ -245,16 +259,63 @@ export default function ReaderPage() {
       </div>
 
       <style jsx>{`
+        .progress-bar-track {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          height: 3px;
+          z-index: 60;
+          background: transparent;
+        }
+        .progress-bar-fill {
+          height: 100%;
+          background: var(--accent);
+          transition: width 300ms linear;
+          border-radius: 0 2px 2px 0;
+        }
         .reader {
           min-height: 100vh;
           display: flex;
           flex-direction: column;
-          background: var(--bg-primary);
+          background: var(--bg-reader);
         }
         .reader-content {
           flex: 1;
-          padding: 72px 24px 180px;
+          padding: 72px 16px 180px;
           overflow-y: auto;
+        }
+        .page-container {
+          max-width: 720px;
+          margin: 0 auto;
+          background: #FAF8F3;
+          border-radius: 4px;
+          box-shadow:
+            0 1px 3px rgba(0, 0, 0, 0.06),
+            0 4px 12px rgba(0, 0, 0, 0.04),
+            inset 0 0 0 1px rgba(0, 0, 0, 0.03);
+          min-height: 60vh;
+          position: relative;
+        }
+        /* Page edge effect */
+        .page-container::before,
+        .page-container::after {
+          content: "";
+          position: absolute;
+          top: 8px;
+          bottom: 8px;
+          width: 12px;
+          pointer-events: none;
+        }
+        .page-container::before {
+          left: 0;
+          background: linear-gradient(to right, rgba(0,0,0,0.02), transparent);
+          border-radius: 4px 0 0 4px;
+        }
+        .page-container::after {
+          right: 0;
+          background: linear-gradient(to left, rgba(0,0,0,0.02), transparent);
+          border-radius: 0 4px 4px 0;
         }
         .controls {
           position: fixed;
@@ -299,6 +360,21 @@ export default function ReaderPage() {
             opacity: 1;
             transform: translateX(-50%) translateY(0);
           }
+        }
+
+        /* Dark mode page */
+        :global(.dark) .page-container {
+          background: #2A2520;
+          box-shadow:
+            0 1px 3px rgba(0, 0, 0, 0.2),
+            0 4px 12px rgba(0, 0, 0, 0.15),
+            inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+        }
+        :global(.dark) .page-container::before {
+          background: linear-gradient(to right, rgba(0,0,0,0.06), transparent);
+        }
+        :global(.dark) .page-container::after {
+          background: linear-gradient(to left, rgba(0,0,0,0.06), transparent);
         }
       `}</style>
     </>

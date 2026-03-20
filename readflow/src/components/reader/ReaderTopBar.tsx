@@ -8,12 +8,14 @@ interface ReaderTopBarProps {
   bookId: string;
   chapterTitle: string;
   onSettingsClick: () => void;
+  progressPercent?: number;
 }
 
 export default function ReaderTopBar({
   bookId,
   chapterTitle,
   onSettingsClick,
+  progressPercent,
 }: ReaderTopBarProps) {
   const [visible, setVisible] = useState(true);
   const lastScrollY = useRef(0);
@@ -40,7 +42,12 @@ export default function ReaderTopBar({
           <ArrowLeft {...ICON_DEFAULTS} />
         </Link>
 
-        <span className="chapter-title">{chapterTitle}</span>
+        <span className="chapter-title">
+          {chapterTitle}
+          {progressPercent !== undefined && progressPercent > 0 && (
+            <span className="progress-badge">{progressPercent}%</span>
+          )}
+        </span>
 
         <div className="right-actions">
           <button onClick={onSettingsClick} className="settings-btn">
@@ -91,6 +98,19 @@ export default function ReaderTopBar({
           white-space: nowrap;
           max-width: 60%;
           text-align: center;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .progress-badge {
+          font-family: var(--font-mono);
+          font-size: 11px;
+          font-weight: 400;
+          color: var(--text-tertiary);
+          background: var(--bg-secondary);
+          padding: 2px 6px;
+          border-radius: 4px;
+          flex-shrink: 0;
         }
         .right-actions {
           display: flex;
