@@ -43,8 +43,10 @@ export async function POST(
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // Already has timestamps
-  if (chapter.audio_timestamps?.length) {
+  // Already has timestamps (unless force regeneration requested)
+  const { searchParams } = new URL(request.url);
+  const force = searchParams.get("force") === "1";
+  if (chapter.audio_timestamps?.length && !force) {
     return NextResponse.json({ audio_timestamps: chapter.audio_timestamps });
   }
 
@@ -67,65 +69,26 @@ export async function POST(
     const audioBytes = audioArrayBuffer.byteLength;
     console.log(`[Timestamps] Audio size: ${audioBytes} bytes`);
 
-    const WHISPER_LIMIT = 24 * 1024 * 1024; // 24MB to stay safely under 25MB limit
-    let whisperWords: { word: string; start: number; end: number }[] = [];
-
-    if (audioBytes <= WHISPER_LIMIT) {
-      // Small enough — single Whisper call
-      const audioFile = new File([audioArrayBuffer], "chapter.mp3", { type: "audio/mpeg" });
-      console.log("[Timestamps] Running Whisper for word timestamps...");
-      const transcription = await openai.audio.transcriptions.create({
-        file: audioFile,
-        model: "whisper-1",
-        response_format: "verbose_json",
-        timestamp_granularities: ["word"],
-      });
-      whisperWords = (transcription as { words?: { word: string; start: number; end: number }[] }).words ?? [];
+    // Whisper has a 25MB upload limit. If the file is larger, truncate it —
+    // alignTimestamps will extrapolate timestamps for the few remaining words.
+    const WHISPER_LIMIT = 25 * 1024 * 1024 - 1024; // 25MB minus 1KB safety margin
+    let audioToSend: ArrayBuffer;
+    if (audioBytes > WHISPER_LIMIT) {
+      console.log(`[Timestamps] Audio ${audioBytes} bytes exceeds ${WHISPER_LIMIT}, truncating`);
+      audioToSend = audioArrayBuffer.slice(0, WHISPER_LIMIT);
     } else {
-      // Split MP3 into chunks under the limit and transcribe each
-      // MP3 frames are independently decodable, so byte-level splitting works
-      const numChunks = Math.ceil(audioBytes / WHISPER_LIMIT);
-      const chunkSize = Math.ceil(audioBytes / numChunks);
-      console.log(`[Timestamps] Audio exceeds limit, splitting into ${numChunks} chunks of ~${chunkSize} bytes`);
-
-      // We need to estimate duration per chunk for timestamp offsetting
-      // First, get total duration from a quick Whisper call on a tiny slice
-      // Instead, we process sequentially and use Whisper's returned timestamps + offset
-      const audioBuffer = Buffer.from(audioArrayBuffer);
-
-      for (let i = 0; i < numChunks; i++) {
-        const start = i * chunkSize;
-        const end = Math.min(start + chunkSize, audioBytes);
-        const chunkBuffer = audioBuffer.subarray(start, end);
-        const chunkFile = new File([chunkBuffer], `chunk_${i}.mp3`, { type: "audio/mpeg" });
-
-        console.log(`[Timestamps] Whisper chunk ${i + 1}/${numChunks} (${chunkBuffer.length} bytes)`);
-        const transcription = await openai.audio.transcriptions.create({
-          file: chunkFile,
-          model: "whisper-1",
-          response_format: "verbose_json",
-          timestamp_granularities: ["word"],
-        });
-
-        const chunkWords = (transcription as { words?: { word: string; start: number; end: number }[] }).words ?? [];
-
-        if (i === 0) {
-          whisperWords = chunkWords;
-        } else {
-          // Offset timestamps: the last word end of previous chunk is our time offset
-          const timeOffset = whisperWords.length > 0
-            ? whisperWords[whisperWords.length - 1]!.end
-            : 0;
-          for (const w of chunkWords) {
-            whisperWords.push({
-              word: w.word,
-              start: w.start + timeOffset,
-              end: w.end + timeOffset,
-            });
-          }
-        }
-      }
+      audioToSend = audioArrayBuffer;
     }
+
+    const audioFile = new File([audioToSend], "chapter.mp3", { type: "audio/mpeg" });
+    console.log("[Timestamps] Running Whisper for word timestamps...");
+    const transcription = await openai.audio.transcriptions.create({
+      file: audioFile,
+      model: "whisper-1",
+      response_format: "verbose_json",
+      timestamp_granularities: ["word"],
+    });
+    const whisperWords = (transcription as { words?: { word: string; start: number; end: number }[] }).words ?? [];
 
     console.log(`[Timestamps] Whisper returned ${whisperWords.length} words`);
 
