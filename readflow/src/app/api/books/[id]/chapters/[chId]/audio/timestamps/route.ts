@@ -104,8 +104,8 @@ export async function POST(
       console.log(`[Timestamps] Low coverage (${(actualCoverage * 100).toFixed(1)}%) — using character-weighted linear estimation`);
       const originalTokens = chapter.raw_text.split(/\s+/).filter((w: string) => w.length > 0);
       const totalChars = originalTokens.reduce((sum: number, w: string) => sum + w.length, 0);
-      // Use Whisper's reported duration (from file metadata) as total
-      const totalDurationMs = (whisperDuration > 30 ? whisperDuration : estimatedDurationSec) * 1000;
+      // Use estimated duration from file size (whisperDuration is unreliable for concatenated MP3s)
+      const totalDurationMs = estimatedDurationSec * 1000;
       let charsSoFar = 0;
       timestamps = originalTokens.map((word: string) => {
         const start = Math.round((charsSoFar / totalChars) * totalDurationMs);
