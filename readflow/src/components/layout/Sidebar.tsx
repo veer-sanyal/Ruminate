@@ -6,8 +6,8 @@ import { BookOpen, PenLine, BarChart3, Settings, ICON_DEFAULTS } from "@/lib/ico
 
 const navItems = [
   { href: "/library", label: "Library", icon: BookOpen },
-  { href: "/journal", label: "Journal", icon: PenLine },
-  { href: "/insights", label: "Insights", icon: BarChart3 },
+  { href: "/journal", label: "Journal", icon: PenLine, disabled: true },
+  { href: "/insights", label: "Insights", icon: BarChart3, disabled: true },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
@@ -25,6 +25,18 @@ export default function Sidebar() {
         <nav className="sidebar-nav">
           {navItems.map((item) => {
             const isActive = pathname.startsWith(item.href);
+            if ("disabled" in item && item.disabled) {
+              return (
+                <span
+                  key={item.href}
+                  className="sidebar-nav-item disabled"
+                >
+                  <item.icon {...ICON_DEFAULTS} />
+                  <span className="sidebar-nav-label">{item.label}</span>
+                  <span className="coming-soon">Soon</span>
+                </span>
+              );
+            }
             return (
               <Link
                 key={item.href}
@@ -117,6 +129,21 @@ export default function Sidebar() {
         .sidebar-nav-label {
           white-space: nowrap;
           overflow: hidden;
+        }
+
+        .sidebar-nav-item.disabled {
+          opacity: 0.4;
+          cursor: default;
+          pointer-events: none;
+        }
+
+        .coming-soon {
+          font-size: 10px;
+          font-weight: 500;
+          color: var(--text-tertiary);
+          margin-left: auto;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
         }
 
         /* Tablet: collapse to icons only */

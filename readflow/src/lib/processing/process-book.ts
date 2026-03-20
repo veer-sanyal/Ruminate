@@ -11,10 +11,10 @@ import { generateDistillation, generateEmbedding } from "@/lib/utils/ai-utils";
 import { generateBookSummary } from "./book-summary";
 
 /**
- * Process a book: download file, extract chapters, update DB.
- * Called directly (not via HTTP) to avoid Vercel deployment protection issues.
+ * Extract chapters from a book file and insert into DB.
+ * Fast phase — no AI calls, completes in seconds.
  */
-export async function processBook(bookId: string) {
+export async function extractBook(bookId: string) {
   const supabase = createAdminClient();
 
   try {
@@ -82,7 +82,7 @@ export async function processBook(bookId: string) {
     }
 
     const updateData: Record<string, unknown> = {
-      processing_status: "distilling",
+      processing_status: "ready",
       total_words: totalWords,
       estimated_listen_mins: estimateListenMins(totalWords),
       estimated_rsvp_mins: estimateRsvpMins(totalWords),
@@ -96,68 +96,6 @@ export async function processBook(bookId: string) {
     }
 
     await supabase.from("books").update(updateData).eq("id", bookId);
-
-    // Fetch the book for context (may have updated title/author)
-    const { data: updatedBook } = await supabase
-      .from("books")
-      .select("title, author")
-      .eq("id", bookId)
-      .single();
-
-    const bookContext = {
-      title: updatedBook?.title ?? "Unknown",
-      author: updatedBook?.author,
-    };
-
-    // Fetch inserted chapters to get their IDs
-    const { data: insertedChapters } = await supabase
-      .from("chapters")
-      .select("id, raw_text, sort_order")
-      .eq("book_id", bookId)
-      .order("sort_order");
-
-    // Distill each chapter (sequential to avoid rate limits)
-    if (insertedChapters) {
-      for (const ch of insertedChapters) {
-        if (!ch.raw_text) continue;
-        try {
-          const distillation = await generateDistillation(ch.raw_text, bookContext);
-          const embeddingText = `${distillation.summary}\n${distillation.key_terms.join(", ")}`;
-          let embedding: number[] | null = null;
-          try {
-            embedding = await generateEmbedding(embeddingText);
-          } catch {
-            // Continue without embedding
-          }
-
-          await supabase.from("distillations").insert({
-            chapter_id: ch.id,
-            summary: distillation.summary,
-            key_terms: distillation.key_terms,
-            claims: distillation.claims,
-            application_angles: distillation.application_angles,
-            identity_beliefs: distillation.identity_beliefs,
-            payoff_questions: distillation.payoff_questions,
-            embedding: embedding ? `[${embedding.join(",")}]` : null,
-          });
-        } catch (err) {
-          console.warn(`[ProcessBook] Distillation failed for chapter ${ch.id}:`, err);
-        }
-      }
-
-      // Generate book-level summary from distillations
-      try {
-        await generateBookSummary(bookId);
-      } catch (err) {
-        console.warn("[ProcessBook] Book summary generation failed:", err);
-      }
-    }
-
-    // Mark as ready
-    await supabase
-      .from("books")
-      .update({ processing_status: "ready" })
-      .eq("id", bookId);
 
     return { success: true, chapters: result.chapters.length };
   } catch (error) {
@@ -174,4 +112,87 @@ export async function processBook(bookId: string) {
 
     throw error;
   }
+}
+
+/**
+ * Distill all chapters in a book (AI summaries, embeddings, etc.).
+ * Slow phase — runs in background, safe to fire-and-forget.
+ */
+export async function distillBook(bookId: string) {
+  const supabase = createAdminClient();
+
+  try {
+    const { data: updatedBook } = await supabase
+      .from("books")
+      .select("title, author")
+      .eq("id", bookId)
+      .single();
+
+    const bookContext = {
+      title: updatedBook?.title ?? "Unknown",
+      author: updatedBook?.author,
+    };
+
+    const { data: chapters } = await supabase
+      .from("chapters")
+      .select("id, raw_text, sort_order")
+      .eq("book_id", bookId)
+      .order("sort_order");
+
+    if (!chapters) return;
+
+    for (const ch of chapters) {
+      if (!ch.raw_text) continue;
+
+      // Skip already-distilled chapters
+      const { data: existing } = await supabase
+        .from("distillations")
+        .select("id")
+        .eq("chapter_id", ch.id)
+        .single();
+
+      if (existing) continue;
+
+      try {
+        const distillation = await generateDistillation(ch.raw_text, bookContext);
+        const embeddingText = `${distillation.summary}\n${distillation.key_terms.join(", ")}`;
+        let embedding: number[] | null = null;
+        try {
+          embedding = await generateEmbedding(embeddingText);
+        } catch {
+          // Continue without embedding
+        }
+
+        await supabase.from("distillations").insert({
+          chapter_id: ch.id,
+          summary: distillation.summary,
+          key_terms: distillation.key_terms,
+          claims: distillation.claims,
+          application_angles: distillation.application_angles,
+          identity_beliefs: distillation.identity_beliefs,
+          payoff_questions: distillation.payoff_questions,
+          embedding: embedding ? `[${embedding.join(",")}]` : null,
+        });
+      } catch (err) {
+        console.warn(`[Distill] Failed for chapter ${ch.id}:`, err);
+      }
+    }
+
+    // Generate book-level summary from distillations
+    try {
+      await generateBookSummary(bookId);
+    } catch (err) {
+      console.warn("[Distill] Book summary generation failed:", err);
+    }
+  } catch (error) {
+    console.error("[Distill] Error distilling book:", error);
+  }
+}
+
+/**
+ * Legacy: runs both extraction and distillation sequentially.
+ */
+export async function processBook(bookId: string) {
+  await extractBook(bookId);
+  await distillBook(bookId);
 }

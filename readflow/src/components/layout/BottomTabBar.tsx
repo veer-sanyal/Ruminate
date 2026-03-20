@@ -6,8 +6,8 @@ import { BookOpen, PenLine, BarChart3, Settings, ICON_EMPHASIS } from "@/lib/ico
 
 const navItems = [
   { href: "/library", label: "Library", icon: BookOpen },
-  { href: "/journal", label: "Journal", icon: PenLine },
-  { href: "/insights", label: "Insights", icon: BarChart3 },
+  { href: "/journal", label: "Journal", icon: PenLine, disabled: true },
+  { href: "/insights", label: "Insights", icon: BarChart3, disabled: true },
   { href: "/settings", label: "Settings", icon: Settings },
 ] as const;
 
@@ -18,6 +18,14 @@ export default function BottomTabBar() {
     <>
       <nav className="bottom-tab-bar">
         {navItems.map((item) => {
+          if ("disabled" in item && item.disabled) {
+            return (
+              <span key={item.href} className="tab-item disabled">
+                <item.icon {...ICON_EMPHASIS} />
+                <span className="tab-label">{item.label}</span>
+              </span>
+            );
+          }
           const isActive = pathname.startsWith(item.href);
           return (
             <Link
@@ -75,6 +83,11 @@ export default function BottomTabBar() {
             font-family: var(--font-sans);
             font-size: 10px;
             font-weight: 500;
+          }
+
+          .tab-item.disabled {
+            opacity: 0.3;
+            pointer-events: none;
           }
         }
       `}</style>

@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { processBook } from "@/lib/processing/process-book";
-
-// Allow longer execution for file upload + processing
-export const maxDuration = 60;
+import { extractBook, distillBook } from "@/lib/processing/process-book";
 
 export async function POST(request: Request) {
   try {
@@ -89,13 +86,22 @@ export async function POST(request: Request) {
       );
     }
 
-    // Process the book directly (extract chapters, update metadata)
+    // Extract chapters (fast — no AI calls)
     try {
-      await processBook(bookId);
+      await extractBook(bookId);
     } catch (processErr) {
-      // processBook already sets the book status to "error" in DB
-      console.error("Book processing failed:", processErr);
+      // extractBook already sets the book status to "error" in DB
+      console.error("Book extraction failed:", processErr);
+      return NextResponse.json(
+        { error: processErr instanceof Error ? processErr.message : "Extraction failed" },
+        { status: 500 }
+      );
     }
+
+    // Fire-and-forget distillation (AI summaries — runs in background)
+    distillBook(bookId).catch((err) =>
+      console.error("Background distillation failed:", err)
+    );
 
     return NextResponse.json({ book_id: bookId });
   } catch (err) {

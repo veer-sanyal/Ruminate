@@ -94,13 +94,6 @@ export async function POST(request: Request) {
     .eq("chapter_id", chapter_id)
     .single();
 
-  if (!distillation) {
-    return NextResponse.json(
-      { error: "Chapter has not been distilled yet" },
-      { status: 404 }
-    );
-  }
-
   // Get user profile for personalization
   const { data: userProfile } = await supabase
     .from("users")
@@ -108,10 +101,19 @@ export async function POST(request: Request) {
     .eq("id", user.id)
     .single();
 
-  // Generate AI prompts
+  // Generate AI prompts (with or without distillation)
   let aiPrompts = [];
   try {
-    aiPrompts = await generateReflectionPrompts(distillation, userProfile ?? undefined);
+    if (distillation) {
+      aiPrompts = await generateReflectionPrompts(distillation, userProfile ?? undefined);
+    } else {
+      // Distillation not ready yet — use generic prompts
+      aiPrompts = [
+        { depth: "surface", prompt: "What was the main idea of this chapter?" },
+        { depth: "analytical", prompt: "Which claim did you find most compelling, and why?" },
+        { depth: "personal", prompt: "How does this chapter connect to your own experience?" },
+      ];
+    }
   } catch (err) {
     console.warn("[Reflections] Prompt generation failed:", err);
     aiPrompts = [
@@ -124,7 +126,7 @@ export async function POST(request: Request) {
   // Find related chapters via embedding similarity
   let aiConnections: { chapter_id: string; chapter_title: string; similarity: number; shared_themes: string[] }[] = [];
   try {
-    if (distillation.embedding) {
+    if (distillation?.embedding) {
       // Get the chapter's book_id
       const { data: chapter } = await admin
         .from("chapters")

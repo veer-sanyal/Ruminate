@@ -23,7 +23,7 @@ export default function UploadModal({ open, onClose }: UploadModalProps) {
   const [dragOver, setDragOver] = useState(false);
   const [fileError, setFileError] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const { mutate: upload, isPending, progress, isSuccess } = useUploadBook();
+  const { mutate: upload, isPending, progress, isSuccess, error: uploadError } = useUploadBook();
 
   function validateFile(file: File): string | null {
     const ext = "." + file.name.split(".").pop()?.toLowerCase();
@@ -115,10 +115,10 @@ export default function UploadModal({ open, onClose }: UploadModalProps) {
           </div>
         )}
 
-        {fileError && (
+        {(fileError || uploadError) && (
           <div className="error-row">
             <AlertCircle size={14} strokeWidth={1.5} />
-            {fileError}
+            {fileError || (uploadError instanceof Error ? uploadError.message : "Upload failed")}
           </div>
         )}
 
