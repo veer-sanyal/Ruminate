@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Check, Headphones, ICON_COMPACT } from "@/lib/icons";
+import { Check, Headphones, Sparkles, ICON_COMPACT } from "@/lib/icons";
 
 interface Chapter {
   id: string;
@@ -10,6 +10,7 @@ interface Chapter {
   word_count: number;
   reading_status: string;
   audio_url?: string | null;
+  has_reflection?: boolean;
 }
 
 interface ChapterListProps {
@@ -40,6 +41,12 @@ export default function ChapterList({ bookId, chapters }: ChapterListProps) {
                 </span>
               </div>
               <span className="ch-status">
+                {ch.has_reflection && (
+                  <Sparkles
+                    {...ICON_COMPACT}
+                    style={{ color: "var(--accent)", marginRight: "4px" }}
+                  />
+                )}
                 {ch.reading_status === "completed" ? (
                   <Check {...ICON_COMPACT} style={{ color: "var(--success)" }} />
                 ) : ch.reading_status === "in_progress" ? (
@@ -109,8 +116,9 @@ export default function ChapterList({ bookId, chapters }: ChapterListProps) {
           color: var(--text-tertiary);
         }
         .ch-status {
+          display: flex;
+          align-items: center;
           flex-shrink: 0;
-          width: 20px;
         }
       `}</style>
     </>

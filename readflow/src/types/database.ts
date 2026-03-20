@@ -102,9 +102,64 @@ export interface Database {
         };
         Update: Partial<Database["public"]["Tables"]["reading_sessions"]["Row"]>;
       };
+      distillations: {
+        Row: {
+          id: string;
+          chapter_id: string;
+          summary: string;
+          key_terms: string[];
+          claims: string[];
+          application_angles: string[];
+          identity_beliefs: string[];
+          payoff_questions: string[];
+          embedding: number[] | null;
+          created_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["distillations"]["Row"]> & {
+          chapter_id: string;
+          summary: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["distillations"]["Row"]>;
+      };
+      reflections: {
+        Row: {
+          id: string;
+          chapter_id: string;
+          user_id: string;
+          ai_prompts: Json;
+          prompt_responses: Json;
+          user_summary: string | null;
+          ai_connections: Json;
+          recall_questions: Json;
+          recall_answers: Json;
+          confusion_clarifications: Json;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["reflections"]["Row"]> & {
+          chapter_id: string;
+          user_id: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["reflections"]["Row"]>;
+      };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      match_distillations: {
+        Args: {
+          query_embedding: number[];
+          match_count?: number;
+          filter_book_id?: string;
+        };
+        Returns: {
+          id: string;
+          chapter_id: string;
+          summary: string;
+          key_terms: string[];
+          similarity: number;
+        }[];
+      };
+    };
     Enums: {
       processing_status: "uploading" | "extracting" | "distilling" | "ready" | "error";
       reading_status: "unread" | "in_progress" | "completed";

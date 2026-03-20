@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Button from "@/components/ui/Button";
-import { Headphones, ICON_DEFAULTS } from "@/lib/icons";
+import { Headphones, Sparkles, ICON_DEFAULTS, ICON_COMPACT } from "@/lib/icons";
 
 interface BookHeaderProps {
   book: {
@@ -11,11 +11,13 @@ interface BookHeaderProps {
     author?: string | null;
     cover_url?: string | null;
     theme_tags?: string[];
+    ai_summary?: string | null;
     progress_percent: number;
     estimated_listen_mins?: number;
     total_chapters: number;
     completed_chapters: number;
     chapters?: { id: string; reading_status: string }[];
+    reflection_count?: number;
   };
 }
 
@@ -72,6 +74,19 @@ export default function BookHeader({ book }: BookHeaderProps) {
               {timeRemaining ? ` · ~${timeRemaining} min left` : ""}
             </span>
           </div>
+
+          {book.ai_summary && (
+            <p className="ai-summary">{book.ai_summary}</p>
+          )}
+
+          {book.reflection_count !== undefined && book.reflection_count > 0 && (
+            <div className="reflection-badge">
+              <Sparkles {...ICON_COMPACT} />
+              <span>
+                {book.reflection_count} reflection{book.reflection_count !== 1 ? "s" : ""}
+              </span>
+            </div>
+          )}
 
           {nextChapter && (
             <Link href={`/read/${book.id}/${nextChapter.id}`}>
@@ -165,6 +180,29 @@ export default function BookHeader({ book }: BookHeaderProps) {
           color: var(--text-tertiary);
           margin-top: 6px;
           display: block;
+        }
+
+        .ai-summary {
+          font-size: 14px;
+          line-height: 1.6;
+          color: var(--text-secondary);
+          margin-top: 8px;
+          display: -webkit-box;
+          -webkit-line-clamp: 3;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+        .reflection-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          padding: 4px 10px;
+          border-radius: 8px;
+          background: var(--bg-accent-subtle, var(--bg-tertiary));
+          color: var(--accent);
+          font-size: 12px;
+          font-weight: 500;
+          margin-top: 8px;
         }
 
         @media (max-width: 640px) {

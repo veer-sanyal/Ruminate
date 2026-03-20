@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useChapter } from "@/hooks/useChapter";
 import { useChapters } from "@/hooks/useChapters";
 import { useAudioPlayer } from "@/hooks/useAudioPlayer";
+import { useRSVPPlayer } from "@/hooks/useRSVPPlayer";
 import { useCheckpoints } from "@/hooks/useCheckpoints";
 import { useReadingSession } from "@/hooks/useReadingSession";
 import { useProgressPersistence } from "@/hooks/useProgressPersistence";
@@ -22,6 +23,10 @@ import ConfusionFlag from "@/components/reader/ConfusionFlag";
 import CheckpointCard from "@/components/reader/CheckpointCard";
 import AudioLoadingState from "@/components/reader/AudioLoadingState";
 import ChapterComplete from "@/components/reader/ChapterComplete";
+import RSVPDisplay from "@/components/reader/RSVPDisplay";
+import RSVPContextLine from "@/components/reader/RSVPContextLine";
+import RSVPScrubBar from "@/components/reader/RSVPScrubBar";
+import WPMControl from "@/components/reader/WPMControl";
 import Skeleton from "@/components/ui/Skeleton";
 
 export default function ReaderPage() {
@@ -29,17 +34,20 @@ export default function ReaderPage() {
   const queryClient = useQueryClient();
   const { data: chapter, isLoading: chapterLoading } = useChapter(bookId, chId);
   const { data: chapters } = useChapters(bookId);
-  const { togglePlayPause, currentWordIndex, reset, seek: storeSeek, playbackPosition } = useReaderStore();
+  const { togglePlayPause, currentWordIndex, reset, seek: storeSeek, playbackPosition, mode } = useReaderStore();
 
   const [showSettings, setShowSettings] = useState(false);
   const [showComplete, setShowComplete] = useState(false);
   const [audioError, setAudioError] = useState(false);
   const [generatingAudio, setGeneratingAudio] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const [rsvpWpm, setRsvpWpm] = useState(300);
+
+  const isRSVP = mode === "rsvp";
 
   // Initialize reader hooks
   useCheckpoints();
-  useReadingSession(chId, "narration");
+  useReadingSession(chId, mode);
   useProgressPersistence(bookId, chId);
 
   // Reset store on chapter change
@@ -109,10 +117,17 @@ export default function ReaderPage() {
     return () => { cancelled = true; };
   }, [chapter?.audio_url, chapter?.audio_timestamps?.length, bookId, chId, queryClient]);
 
-  // Audio player
+  // Audio player (narration mode)
   const { seekTo, getDuration, isLoading: audioLoading } = useAudioPlayer({
-    audioUrl: chapter?.audio_url ?? null,
+    audioUrl: !isRSVP ? (chapter?.audio_url ?? null) : null,
     timestamps: chapter?.audio_timestamps ?? undefined,
+    onEnded: () => setShowComplete(true),
+  });
+
+  // RSVP player
+  const rsvpPlayer = useRSVPPlayer({
+    text: chapter?.raw_text ?? "",
+    wpm: rsvpWpm,
     onEnded: () => setShowComplete(true),
   });
 
@@ -192,7 +207,11 @@ export default function ReaderPage() {
   }
 
   const duration = getDuration();
-  const progressPercent = duration > 0 ? (playbackPosition / duration) * 100 : 0;
+  const progressPercent = isRSVP
+    ? rsvpPlayer.progressPercent
+    : duration > 0
+      ? (playbackPosition / duration) * 100
+      : 0;
 
   return (
     <>
@@ -210,46 +229,81 @@ export default function ReaderPage() {
           chapterTitle={chapter.title ?? "Chapter"}
           onSettingsClick={() => setShowSettings(!showSettings)}
           progressPercent={Math.round(progressPercent)}
+          showModeToggle
         />
 
         <div className="reader-content">
           <div className="page-container">
-            {generatingAudio || audioLoading ? (
-              <AudioLoadingState
-                status="generating"
-              />
-            ) : audioError ? (
-              <AudioLoadingState
-                status="error"
-                onRetry={() => {
-                  setAudioError(false);
-                  setRetryCount((c) => c + 1);
-                }}
-              />
-            ) : null}
+            {isRSVP ? (
+              /* RSVP Mode */
+              <>
+                <RSVPDisplay word={rsvpPlayer.currentWord} />
+                {chapter.raw_text && (
+                  <RSVPContextLine
+                    text={chapter.raw_text}
+                    currentWordIndex={rsvpPlayer.currentWordIndex}
+                  />
+                )}
+              </>
+            ) : (
+              /* Narration Mode */
+              <>
+                {generatingAudio || audioLoading ? (
+                  <AudioLoadingState status="generating" />
+                ) : audioError ? (
+                  <AudioLoadingState
+                    status="error"
+                    onRetry={() => {
+                      setAudioError(false);
+                      setRetryCount((c) => c + 1);
+                    }}
+                  />
+                ) : null}
 
-            {chapter.raw_text && (
-              <ChapterText
-                text={chapter.raw_text}
-                onTogglePlayPause={togglePlayPause}
-              />
+                {chapter.raw_text && (
+                  <ChapterText
+                    text={chapter.raw_text}
+                    onTogglePlayPause={togglePlayPause}
+                  />
+                )}
+              </>
             )}
           </div>
         </div>
 
         {/* Controls */}
         <div className="controls">
-          <ScrubBar duration={duration} onSeek={seekTo} />
-          <div className="controls-row">
-            <SentenceReplay onReplaySentence={handleReplaySentence} />
-            <PlayPauseButton />
-            <div style={{ width: "44px" }} /> {/* spacer for balance */}
-          </div>
+          {isRSVP ? (
+            <>
+              <RSVPScrubBar
+                currentWord={rsvpPlayer.currentWordIndex}
+                totalWords={rsvpPlayer.totalWords}
+                onSeek={rsvpPlayer.seekToWord}
+              />
+              <div className="controls-row">
+                <WPMControl wpm={rsvpWpm} onWpmChange={setRsvpWpm} />
+                <PlayPauseButton />
+              </div>
+            </>
+          ) : (
+            <>
+              <ScrubBar duration={duration} onSeek={seekTo} />
+              <div className="controls-row">
+                <SentenceReplay onReplaySentence={handleReplaySentence} />
+                <PlayPauseButton />
+                <div style={{ width: "44px" }} /> {/* spacer for balance */}
+              </div>
+            </>
+          )}
         </div>
 
         {showSettings && (
           <div className="settings-panel">
-            <SpeedControl />
+            {isRSVP ? (
+              <WPMControl wpm={rsvpWpm} onWpmChange={setRsvpWpm} />
+            ) : (
+              <SpeedControl />
+            )}
           </div>
         )}
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function GET(
   _request: Request,
@@ -39,5 +40,16 @@ export async function GET(
     return NextResponse.json({ error: "Chapter not found" }, { status: 404 });
   }
 
-  return NextResponse.json(chapter);
+  // Include distillation data if available
+  const admin = createAdminClient();
+  const { data: distillation } = await admin
+    .from("distillations")
+    .select("summary, key_terms, claims, application_angles, payoff_questions")
+    .eq("chapter_id", chId)
+    .single();
+
+  return NextResponse.json({
+    ...chapter,
+    distillation: distillation ?? null,
+  });
 }

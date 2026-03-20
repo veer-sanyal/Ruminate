@@ -11,6 +11,11 @@ export type {
   Book,
   Chapter,
   ReadingSession,
+  Distillation,
+  Reflection,
+  ReflectionPrompt,
+  ReflectionConnection,
+  RecallQuestion,
 } from "@/lib/schemas";
 
 export type { Database, Tables, TablesInsert, TablesUpdate, Enums } from "./database";

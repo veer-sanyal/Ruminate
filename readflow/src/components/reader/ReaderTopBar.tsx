@@ -3,12 +3,14 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { ArrowLeft, Settings, ICON_DEFAULTS } from "@/lib/icons";
+import ModeToggle from "./ModeToggle";
 
 interface ReaderTopBarProps {
   bookId: string;
   chapterTitle: string;
   onSettingsClick: () => void;
   progressPercent?: number;
+  showModeToggle?: boolean;
 }
 
 export default function ReaderTopBar({
@@ -16,6 +18,7 @@ export default function ReaderTopBar({
   chapterTitle,
   onSettingsClick,
   progressPercent,
+  showModeToggle,
 }: ReaderTopBarProps) {
   const [visible, setVisible] = useState(true);
   const lastScrollY = useRef(0);
@@ -50,6 +53,7 @@ export default function ReaderTopBar({
         </span>
 
         <div className="right-actions">
+          {showModeToggle && <ModeToggle />}
           <button onClick={onSettingsClick} className="settings-btn">
             <Settings {...ICON_DEFAULTS} />
           </button>

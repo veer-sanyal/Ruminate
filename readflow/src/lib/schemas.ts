@@ -100,6 +100,58 @@ export const readingSessionSchema = z.object({
   comprehension_ratings: z.any().default([]),
 });
 
+/* ── Distillations ── */
+
+export const distillationSchema = z.object({
+  id: z.string().uuid(),
+  chapter_id: z.string().uuid(),
+  summary: z.string(),
+  key_terms: z.array(z.string()).default([]),
+  claims: z.array(z.string()).default([]),
+  application_angles: z.array(z.string()).default([]),
+  identity_beliefs: z.array(z.string()).default([]),
+  payoff_questions: z.array(z.string()).default([]),
+  embedding: z.array(z.number()).nullable().optional(),
+  created_at: z.string().optional(),
+});
+
+/* ── Reflections ── */
+
+export const reflectionPromptSchema = z.object({
+  depth: z.enum(["surface", "analytical", "personal"]),
+  prompt: z.string(),
+});
+
+export const reflectionConnectionSchema = z.object({
+  chapter_id: z.string().uuid(),
+  chapter_title: z.string(),
+  similarity: z.number(),
+  shared_themes: z.array(z.string()),
+});
+
+export const recallQuestionSchema = z.object({
+  question: z.string(),
+  answer: z.string(),
+});
+
+export const reflectionSchema = z.object({
+  id: z.string().uuid(),
+  chapter_id: z.string().uuid(),
+  user_id: z.string().uuid(),
+  ai_prompts: z.array(reflectionPromptSchema).default([]),
+  prompt_responses: z.array(z.string()).default([]),
+  user_summary: z.string().nullable().optional(),
+  ai_connections: z.array(reflectionConnectionSchema).default([]),
+  recall_questions: z.array(recallQuestionSchema).default([]),
+  recall_answers: z.array(z.string()).default([]),
+  confusion_clarifications: z.array(z.object({
+    passage: z.string(),
+    clarification: z.string(),
+  })).default([]),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+});
+
 /* ── Auth Forms ── */
 
 export const loginSchema = z.object({
@@ -125,3 +177,8 @@ export type User = z.infer<typeof userSchema>;
 export type Book = z.infer<typeof bookSchema>;
 export type Chapter = z.infer<typeof chapterSchema>;
 export type ReadingSession = z.infer<typeof readingSessionSchema>;
+export type Distillation = z.infer<typeof distillationSchema>;
+export type Reflection = z.infer<typeof reflectionSchema>;
+export type ReflectionPrompt = z.infer<typeof reflectionPromptSchema>;
+export type ReflectionConnection = z.infer<typeof reflectionConnectionSchema>;
+export type RecallQuestion = z.infer<typeof recallQuestionSchema>;
