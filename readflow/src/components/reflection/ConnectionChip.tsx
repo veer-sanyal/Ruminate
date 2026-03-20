@@ -37,7 +37,7 @@ export default function ConnectionChip({
           align-items: center;
           gap: 6px;
           padding: 8px 14px;
-          border-radius: 20px;
+          border-radius: 10px;
           border: 1px solid var(--border-default);
           background: var(--bg-secondary);
           text-decoration: none;

@@ -39,9 +39,14 @@ export default function RecallQuestionsSection({
   return (
     <>
       <div className="recall-section">
-        <div className="section-header">
-          <h3 className="section-title">Test Your Recall</h3>
-          {questions.length === 0 && (
+        <div className="section-label-row">
+          <span className="section-title">Test Your Recall</span>
+          <div className="label-line" />
+        </div>
+
+        {questions.length === 0 && (
+          <div className="empty-state">
+            <p className="empty-hint">See how much you remember — generate a quick set of recall questions.</p>
             <Button
               variant="secondary"
               size="sm"
@@ -50,8 +55,8 @@ export default function RecallQuestionsSection({
             >
               Generate Questions
             </Button>
-          )}
-        </div>
+          </div>
+        )}
 
         {questions.length > 0 && (
           <div className="questions-list">
@@ -83,18 +88,36 @@ export default function RecallQuestionsSection({
 
       <style jsx>{`
         .recall-section {
-          margin-bottom: 28px;
+          margin-bottom: 36px;
         }
-        .section-header {
+        .section-label-row {
           display: flex;
           align-items: center;
-          justify-content: space-between;
-          margin-bottom: 12px;
+          gap: 12px;
+          margin-bottom: 14px;
         }
         .section-title {
           font-family: var(--font-display);
-          font-size: 17px;
+          font-size: 19px;
+          font-style: italic;
           color: var(--text-primary);
+          white-space: nowrap;
+        }
+        .label-line {
+          flex: 1;
+          height: 1px;
+          background: var(--border-default);
+        }
+        .empty-state {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 12px;
+        }
+        .empty-hint {
+          font-size: 14px;
+          font-style: italic;
+          color: var(--text-tertiary);
         }
         .questions-list {
           display: flex;

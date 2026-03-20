@@ -36,13 +36,13 @@ export default function RSVPDisplay({ word }: RSVPDisplayProps) {
     <>
       <div className="rsvp-display">
         <div className="rsvp-word-container">
-          {/* ORP guide line */}
+          {/* ORP guide line — anchored to center where ORP char sits */}
           <div className="orp-guide" />
-          <span className="rsvp-word">
+          <div className="rsvp-word">
             <span className="before">{before}</span>
             <span className="orp-char">{orp}</span>
             <span className="after">{after}</span>
-          </span>
+          </div>
         </div>
       </div>
 
@@ -72,21 +72,27 @@ export default function RSVPDisplay({ word }: RSVPDisplayProps) {
           transform: translateX(-50%);
         }
         .rsvp-word {
-          font-family: var(--font-mono);
+          font-family: var(--font-reader);
           font-size: 42px;
           font-weight: 400;
           letter-spacing: 0.02em;
           white-space: nowrap;
+          display: grid;
+          grid-template-columns: 1fr auto 1fr;
+          align-items: baseline;
         }
         .before {
           color: var(--text-primary);
+          text-align: right;
         }
         .orp-char {
           color: var(--accent);
           font-weight: 700;
+          text-align: center;
         }
         .after {
           color: var(--text-primary);
+          text-align: left;
         }
       `}</style>
     </>

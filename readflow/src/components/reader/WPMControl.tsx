@@ -58,7 +58,7 @@ export default function WPMControl({ wpm, onWpmChange }: WPMControlProps) {
         }
         .preset-btn.active {
           background: var(--accent);
-          color: white;
+          color: var(--text-on-accent);
           border-color: var(--accent);
         }
       `}</style>

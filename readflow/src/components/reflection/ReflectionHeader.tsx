@@ -34,10 +34,10 @@ export default function ReflectionHeader({
           margin-bottom: 12px;
         }
         .label {
-          font-size: 13px;
-          font-weight: 600;
+          font-size: 11px;
+          font-weight: 500;
           text-transform: uppercase;
-          letter-spacing: 0.05em;
+          letter-spacing: 0.06em;
         }
         .chapter-title {
           font-family: var(--font-display);

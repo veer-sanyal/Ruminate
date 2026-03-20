@@ -198,11 +198,11 @@ export default function BookHeader({ book }: BookHeaderProps) {
           gap: 5px;
           padding: 4px 10px;
           border-radius: 8px;
-          background: var(--bg-accent-subtle, var(--bg-tertiary));
+          background: var(--bg-accent-subtle);
           color: var(--accent);
           font-size: 12px;
           font-weight: 500;
-          margin-top: 8px;
+          margin-top: 12px;
         }
 
         @media (max-width: 640px) {

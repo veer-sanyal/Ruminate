@@ -54,6 +54,9 @@ export default function RSVPScrubBar({
           height: 4px;
           border-radius: 2px;
           background: var(--bg-tertiary);
+          /* Larger invisible hit area */
+          padding: 6px 0;
+          background-clip: content-box;
         }
         .scrub-fill {
           height: 100%;
@@ -69,7 +72,21 @@ export default function RSVPScrubBar({
           border-radius: 50%;
           background: var(--accent);
           transform: translate(-50%, -50%);
-          transition: left 100ms linear;
+          transition: left 100ms linear, width 150ms ease, height 150ms ease, box-shadow 150ms ease;
+          cursor: pointer;
+        }
+        .scrub-bar:hover .scrub-thumb {
+          width: 16px;
+          height: 16px;
+        }
+        .scrub-thumb:focus-visible {
+          outline: 2px solid var(--accent);
+          outline-offset: 2px;
+        }
+        .scrub-bar:active .scrub-thumb {
+          width: 14px;
+          height: 14px;
+          box-shadow: 0 0 0 4px var(--accent-subtle);
         }
         .scrub-labels {
           display: flex;

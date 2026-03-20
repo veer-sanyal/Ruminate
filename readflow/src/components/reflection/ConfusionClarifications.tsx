@@ -82,12 +82,13 @@ export default function ConfusionClarifications({
 
       <style jsx>{`
         .clarification-section {
-          margin-bottom: 28px;
+          margin-bottom: 20px;
         }
         .section-title {
           font-family: var(--font-display);
-          font-size: 17px;
-          color: var(--text-primary);
+          font-size: 16px;
+          font-style: italic;
+          color: var(--text-secondary);
           margin-bottom: 12px;
           display: flex;
           align-items: center;

@@ -12,35 +12,52 @@ export default function ConnectionsSection({
   bookId,
   connections,
 }: ConnectionsSectionProps) {
-  if (!connections.length) return null;
-
   return (
     <>
       <div className="connections-section">
-        <h3 className="section-title">Related Chapters</h3>
-        <div className="connections-scroll">
-          {connections.map((conn) => (
-            <ConnectionChip
-              key={conn.chapter_id}
-              bookId={bookId}
-              chapterId={conn.chapter_id}
-              chapterTitle={conn.chapter_title}
-              similarity={conn.similarity}
-              sharedThemes={conn.shared_themes}
-            />
-          ))}
+        <div className="section-label-row">
+          <span className="section-label">Related Chapters</span>
+          <div className="label-line" />
         </div>
+        {connections.length > 0 ? (
+          <div className="connections-scroll">
+            {connections.map((conn) => (
+              <ConnectionChip
+                key={conn.chapter_id}
+                bookId={bookId}
+                chapterId={conn.chapter_id}
+                chapterTitle={conn.chapter_title}
+                similarity={conn.similarity}
+                sharedThemes={conn.shared_themes}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="empty-hint">Connections will appear once the chapter is analyzed.</p>
+        )}
       </div>
 
       <style jsx>{`
         .connections-section {
-          margin-bottom: 28px;
+          margin-bottom: 20px;
         }
-        .section-title {
+        .section-label-row {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          margin-bottom: 14px;
+        }
+        .section-label {
           font-family: var(--font-display);
-          font-size: 17px;
+          font-size: 19px;
+          font-style: italic;
           color: var(--text-primary);
-          margin-bottom: 12px;
+          white-space: nowrap;
+        }
+        .label-line {
+          flex: 1;
+          height: 1px;
+          background: var(--border-default);
         }
         .connections-scroll {
           display: flex;
@@ -51,6 +68,12 @@ export default function ConnectionsSection({
         }
         .connections-scroll::-webkit-scrollbar {
           display: none;
+        }
+        .empty-hint {
+          font-size: 14px;
+          font-style: italic;
+          color: var(--text-tertiary);
+          padding: 16px 0;
         }
       `}</style>
     </>

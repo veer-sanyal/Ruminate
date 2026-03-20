@@ -81,7 +81,7 @@ export default function UserSummarySection({
 
       <style jsx>{`
         .summary-section {
-          margin-bottom: 28px;
+          margin-bottom: 40px;
         }
         .section-header {
           display: flex;
@@ -91,7 +91,8 @@ export default function UserSummarySection({
         }
         .section-title {
           font-family: var(--font-display);
-          font-size: 17px;
+          font-size: 22px;
+          font-style: italic;
           color: var(--text-primary);
         }
         .voice-btn {
@@ -111,9 +112,9 @@ export default function UserSummarySection({
           background: var(--bg-tertiary);
         }
         .voice-btn.listening {
-          background: var(--error);
-          color: white;
-          border-color: var(--error);
+          background: var(--accent);
+          color: var(--text-on-accent);
+          border-color: var(--accent);
           animation: pulse 1.5s infinite;
         }
         .summary-textarea {

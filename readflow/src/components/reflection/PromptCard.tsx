@@ -12,10 +12,10 @@ interface PromptCardProps {
   index: number;
 }
 
-const DEPTH_LABELS: Record<string, { label: string; color: string }> = {
-  surface: { label: "Comprehension", color: "var(--success)" },
-  analytical: { label: "Analysis", color: "var(--accent)" },
-  personal: { label: "Personal", color: "var(--warning, #e59400)" },
+const DEPTH_LABELS: Record<string, { label: string; opacity: number }> = {
+  surface: { label: "Comprehension", opacity: 0.6 },
+  analytical: { label: "Analysis", opacity: 0.85 },
+  personal: { label: "Personal", opacity: 1 },
 };
 
 export default function PromptCard({
@@ -37,7 +37,7 @@ export default function PromptCard({
       >
         <button className="prompt-header" onClick={() => setExpanded(!expanded)}>
           <div className="prompt-left">
-            <span className="depth-tag" style={{ color: config.color }}>
+            <span className="depth-tag" style={{ opacity: config.opacity }}>
               {config.label}
             </span>
             <span className="prompt-text">{prompt}</span>
@@ -98,6 +98,7 @@ export default function PromptCard({
           font-weight: 600;
           text-transform: uppercase;
           letter-spacing: 0.05em;
+          color: var(--accent);
         }
         .prompt-text {
           font-size: 15px;
