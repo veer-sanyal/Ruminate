@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { extractBook, distillBook } from "@/lib/processing/process-book";
+import { extractBook } from "@/lib/processing/process-book";
 
 export async function POST(request: Request) {
   try {
@@ -98,10 +98,15 @@ export async function POST(request: Request) {
       );
     }
 
-    // Fire-and-forget distillation (AI summaries — runs in background)
-    distillBook(bookId).catch((err) =>
-      console.error("Background distillation failed:", err)
-    );
+    // Trigger self-chaining distillation endpoint (separate serverless invocation)
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL
+      || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+
+    fetch(`${baseUrl}/api/internal/distill-book`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ book_id: bookId }),
+    }).catch((err) => console.error('Failed to trigger distillation:', err));
 
     return NextResponse.json({ book_id: bookId });
   } catch (err) {

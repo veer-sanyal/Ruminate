@@ -192,6 +192,14 @@ export async function distillBook(bookId: string) {
       .eq("id", bookId);
   } catch (error) {
     console.error("[Distill] Error distilling book:", error);
+    await supabase
+      .from("books")
+      .update({
+        processing_status: "error",
+        processing_error:
+          error instanceof Error ? error.message : "Distillation failed",
+      })
+      .eq("id", bookId);
   }
 }
 

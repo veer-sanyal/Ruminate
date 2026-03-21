@@ -5,6 +5,8 @@ import { Loader2, AlertCircle, ICON_COMPACT } from "@/lib/icons";
 
 interface ProcessingBadgeProps {
   status: ProcessingStatus;
+  distilledCount?: number;
+  totalChapters?: number;
 }
 
 const STATUS_CONFIG: Record<
@@ -18,9 +20,15 @@ const STATUS_CONFIG: Record<
   error: { label: "Error", color: "var(--error)", icon: "error" },
 };
 
-export default function ProcessingBadge({ status }: ProcessingBadgeProps) {
+export default function ProcessingBadge({ status, distilledCount, totalChapters }: ProcessingBadgeProps) {
   const config = STATUS_CONFIG[status];
   if (status === "ready") return null;
+
+  const showProgress =
+    status === "distilling" &&
+    distilledCount !== undefined &&
+    totalChapters !== undefined &&
+    totalChapters > 0;
 
   return (
     <>
@@ -29,7 +37,7 @@ export default function ProcessingBadge({ status }: ProcessingBadgeProps) {
           <Loader2 {...ICON_COMPACT} className="badge-spinner" />
         )}
         {config.icon === "error" && <AlertCircle {...ICON_COMPACT} />}
-        {config.label}
+        {showProgress ? `Distilling ${distilledCount}/${totalChapters}` : config.label}
       </span>
 
       <style jsx>{`

@@ -5,7 +5,7 @@ import type { Book } from "@/types";
 import ProcessingBadge from "./ProcessingBadge";
 
 interface BookCardProps {
-  book: Book;
+  book: Book & { distilled_count?: number; total_chapters?: number };
   variant?: "default" | "hero";
 }
 
@@ -46,7 +46,11 @@ export default function BookCard({ book, variant = "default" }: BookCardProps) {
       )}
       {isProcessing && (
         <div className="badge-overlay">
-          <ProcessingBadge status={book.processing_status} />
+          <ProcessingBadge
+            status={book.processing_status}
+            distilledCount={book.distilled_count}
+            totalChapters={book.total_chapters}
+          />
         </div>
       )}
     </div>

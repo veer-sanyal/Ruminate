@@ -41,12 +41,40 @@ export async function GET(
   const progressPercent =
     totalChapters > 0 ? Math.round((completedChapters / totalChapters) * 100) : 0;
 
+  // Count distilled chapters for progress display
+  let distilledCount = 0;
+  if (chapters?.length) {
+    const chapterIds = chapters.map((c) => c.id);
+    const { count } = await supabase
+      .from("distillations")
+      .select("id", { count: "exact", head: true })
+      .in("chapter_id", chapterIds);
+    distilledCount = count ?? 0;
+  }
+
+  // Self-heal: if stuck in "distilling" for >5 minutes, re-trigger the chain
+  if (book.processing_status === "distilling" && book.updated_at) {
+    const updatedAt = new Date(book.updated_at).getTime();
+    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+    if (updatedAt < fiveMinutesAgo) {
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL
+        || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+
+      fetch(`${baseUrl}/api/internal/distill-book`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ book_id: id }),
+      }).catch((err) => console.error('Failed to re-trigger distillation:', err));
+    }
+  }
+
   return NextResponse.json({
     ...book,
     chapters: chapters ?? [],
     progress_percent: progressPercent,
     total_chapters: totalChapters,
     completed_chapters: completedChapters,
+    distilled_count: distilledCount,
   });
 }
 

@@ -11,6 +11,10 @@
     "src/app/api/books/[id]/chapters/[chId]/audio/timestamps/route.ts": {
       "maxDuration": 60,
       "memory": 1024
+    },
+    "src/app/api/internal/distill-book/route.ts": {
+      "maxDuration": 120,
+      "memory": 1024
     }
   }
 }
