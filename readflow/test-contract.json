@@ -1,0 +1,16 @@
+{
+  "project": "readflow",
+  "unit": "npm run test",
+  "lint": "npm run lint",
+  "format_check": "npx prettier --check .",
+  "type_check": "npx tsc --noEmit",
+  "e2e": "npx playwright test",
+  "visual": "npx playwright test --grep @visual",
+  "notes": {
+    "test_runner": "NONE — no Jest, Vitest, or Playwright configured yet. Task RF-197 must be completed first.",
+    "existing_tests": "0 test files",
+    "lint_command": "next lint (eslint wrapper via eslint-config-next)",
+    "missing_scripts": ["test", "test:watch", "test:integration", "format", "format:check"],
+    "missing_devdeps": ["vitest or jest", "@testing-library/react", "@testing-library/jest-dom", "@playwright/test", "prettier"]
+  }
+}
